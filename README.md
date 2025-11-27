@@ -112,6 +112,9 @@ adk api --host 0.0.0.0 --port 8000 .
 Run in background:
 ```bash
 pkill -f "adk api" && sleep 2 && cd /Users/rahulgupta/Documents/Coding/agentic-codereview/agent_workspace && /Users/rahulgupta/Documents/Coding/agentic-codereview/venv/bin/adk api --host 0.0.0.0 --port 8000 . > adk_api.log 2>&1 &
+
+
+pkill -f "adk web" && sleep 2 && /Users/rahulgupta/Documents/Coding/agentic-codereview/venv/bin/adk web --host 0.0.0.0 --port 8800 . > adk_web.log 2>&1 &
 ```
 
 Check API health:
