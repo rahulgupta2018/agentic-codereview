@@ -1,3 +1,8 @@
 google-adk
 litellm
 python-multipart
+
+# MCP GitHub Integration 
+mcp[cli]
+mcp-server-github
+PyGitHub
