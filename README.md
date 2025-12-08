@@ -24,6 +24,8 @@ Multi-agent AI system for comprehensive code review using Google ADK.
 cd /Users/rahulgupta/Documents/Coding/agentic-codereview
 python3 -m venv venv
 
+/opt/homebrew/bin/python3.12 -m venv venv && source venv/bin/activate && pip install --upgrade pip
+
 # Activate environment
 source venv/bin/activate
 
@@ -47,7 +49,11 @@ GEMINI_MODEL=gemini-2.5-flash
 ```bash
 # Install and start Ollama
 brew install ollama
-ollama serve
+ollama serve #Start ollama
+
+# Test if ollama is working
+ollama run llama3.2 "Say hello in one sentence"
+curl -X POST http://localhost:11434/api/generate -d '{"model": "granite4:latest", "prompt": "Say hello in one sentence", "stream": false}'
 
 # Pull models
 ollama pull granite4:latest
@@ -101,37 +107,63 @@ pkill -f "adk web"
 ```
 
 ## ADK API Server (Production Integration)
-Access at: http://localhost:8000
+**Official Google ADK REST API** at: http://localhost:8000
 
-Start ADK API server:
+### Quick Start
+```bash
+# Start server (with SQLite sessions, auto-reload)
+./scripts/start_adk_api_server.sh
+
+# Stop server
+./scripts/stop_adk_api_server.sh
+```
+
+### Manual Start
 ```bash
 cd /Users/rahulgupta/Documents/Coding/agentic-codereview/agent_workspace
-adk api --host 0.0.0.0 --port 8000 .
+
+# Development mode
+adk api_server \
+  --host 0.0.0.0 \
+  --port 8000 \
+  --session_service_uri sqlite:///./sessions.db \
+  --reload_agents \
+  .
+
+# Production mode (with PostgreSQL)
+adk api_server \
+  --host 0.0.0.0 \
+  --port 8000 \
+  --session_service_uri postgresql://user:pass@host:port/dbname \
+  --trace_to_cloud \
+  .
 ```
 
-Run in background:
+### API Documentation
+- **Swagger UI**: http://localhost:8000/docs
+- **ReDoc**: http://localhost:8000/redoc
+- **OpenAPI JSON**: http://localhost:8000/openapi.json
+
+### Test API
 ```bash
-pkill -f "adk api" && sleep 2 && cd /Users/rahulgupta/Documents/Coding/agentic-codereview/agent_workspace && /Users/rahulgupta/Documents/Coding/agentic-codereview/venv/bin/adk api --host 0.0.0.0 --port 8000 . > adk_api.log 2>&1 &
-
-
-pkill -f "adk web" && sleep 2 && /Users/rahulgupta/Documents/Coding/agentic-codereview/venv/bin/adk web --host 0.0.0.0 --port 8800 . > adk_web.log 2>&1 &
-```
-
-Check API health:
-```bash
-curl http://localhost:8000/health
-```
-
-Test code review via API:
-```bash
-curl -X POST http://localhost:8000/apps/orchestrator_agent/users/user/sessions \
+# Create session
+SESSION_RESPONSE=$(curl -s -X POST \
+  http://localhost:8000/apps/orchestrator_agent/users/testuser/sessions \
   -H "Content-Type: application/json" \
-  -d '{"state": {}}'
-# Returns session_id, use it for chat:
-curl -X POST http://localhost:8000/apps/orchestrator_agent/users/user/sessions/{session_id}/chat \
+  -d '{"state": {}}')
+
+SESSION_ID=$(echo $SESSION_RESPONSE | python3 -c "import sys, json; print(json.load(sys.stdin)['id'])")
+
+# Send code review request
+curl -X POST \
+  "http://localhost:8000/apps/orchestrator_agent/users/testuser/sessions/$SESSION_ID/chat" \
   -H "Content-Type: application/json" \
-  -d '{"message": "Review this code: def login(user): query = f\"SELECT * FROM users WHERE name={user}\"; return exec(query)"}'
+  -d '{
+    "message": "Review this code: def login(user): query = f\"SELECT * FROM users WHERE name={user}\"; return exec(query)"
+  }'
 ```
+
+**See full guide**: [docs/ADK_API_SERVER_GUIDE.md](./docs/ADK_API_SERVER_GUIDE.md)
 
 ## CLI/Script Mode (Direct Execution)
 ```bash
@@ -148,3 +180,16 @@ python main.py
 
 
 
+ADK - adk -- help
+
+Commands:
+  api_server   Starts a FastAPI server for agents.
+  conformance  Conformance testing tools for ADK.
+  create       Creates a new app in the current folder with prepopulated agent template.
+  deploy       Deploys agent to hosted environments.
+  eval         Evaluates an agent given the eval sets.
+  eval_set     Manage Eval Sets.
+  run          Runs an interactive CLI for a certain agent.
+  web          Starts a FastAPI server with Web UI for agents.
+
+  adk api_server --help

@@ -1,0 +1,83 @@
+version: '3.8'
+
+services:
+  # PostgreSQL database for ADK sessions
+  postgres:
+    image: postgres:15-alpine
+    container_name: adk-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: adk_sessions
+      POSTGRES_USER: adk_user
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-devpassword}
+      POSTGRES_INITDB_ARGS: "-E UTF8"
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./logs/postgres:/var/log/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U adk_user -d adk_sessions"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - adk-network
+
+  # PgAdmin for database management (optional)
+  pgadmin:
+    image: dpage/pgadmin4
+    container_name: adk-pgadmin
+    restart: unless-stopped
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL:-admin@example.com}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD:-admin}
+      PGADMIN_CONFIG_SERVER_MODE: 'False'
+      PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED: 'False'
+    ports:
+      - "5050:80"
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - adk-network
+    profiles:
+      - tools  # Only start with: docker-compose --profile tools up
+
+  # ADK API Server (optional - can run outside Docker)
+  adk-api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    container_name: adk-api-server
+    restart: unless-stopped
+    environment:
+      SESSION_DB_URI: postgresql://adk_user:${DB_PASSWORD:-devpassword}@postgres:5432/adk_sessions
+      GEMINI_API_KEY: ${GEMINI_API_KEY}
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./agent_workspace:/app/agent_workspace:ro
+      - ./data:/app/data
+      - ./logs:/app/logs
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - adk-network
+    profiles:
+      - api  # Only start with: docker-compose --profile api up
+
+volumes:
+  postgres_data:
+    driver: local
+  pgadmin_data:
+    driver: local
+
+networks:
+  adk-network:
+    driver: bridge

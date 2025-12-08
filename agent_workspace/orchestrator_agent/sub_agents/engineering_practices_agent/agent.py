@@ -6,7 +6,7 @@ Simple engineering practices analysis agent following ADK parallel agent pattern
 import sys
 import logging
 from pathlib import Path
-from google.adk.agents import LlmAgent
+from google.adk.agents import Agent
 
 # Setup logging
 logger = logging.getLogger(__name__)
@@ -23,6 +23,7 @@ from util.llm_model import get_sub_agent_model
 
 # Import tools
 from tools.engineering_practices_evaluator import evaluate_engineering_practices
+from tools.save_analysis_artifact import save_analysis_result
 
 # Get the centralized model instance
 logger.info("🔧 [engineering_practices_agent] Initializing Engineering Practices Agent")
@@ -30,13 +31,12 @@ agent_model = get_sub_agent_model()
 logger.info(f"🔧 [engineering_practices_agent] Model configured: {agent_model}")
 
 # Engineering Practices Agent optimized for ParallelAgent pattern
-logger.info("🔧 [engineering_practices_agent] Creating LlmAgent with engineering evaluation tools")
-engineering_practices_agent = LlmAgent(
+logger.info("🔧 [engineering_practices_agent] Creating Agent with engineering evaluation tools")
+engineering_practices_agent = Agent(
     name="engineering_practices_agent",
     model=agent_model,
     description="Evaluates software engineering best practices and development workflows",
     instruction="""Role: You are an Engineering Practices Analysis Agent responsible for identifying design, documentation, 
-    and process issues in the submitted code. 
     You do not generate user-facing text — you produce structured JSON output for downstream aggregation.
     
     **Your Input:**
@@ -130,8 +130,24 @@ engineering_practices_agent = LlmAgent(
             }
         ]
     }                   
+    
+    **CRITICAL: TWO-STEP PROCESS (DO BOTH STEPS):**
+    
+    **STEP 1: Generate JSON Analysis**
+    - Call evaluate_engineering_practices tool
+    - Output ONLY pure JSON (NO markdown fences, NO ```json, NO explanations)
+    - JSON must contain engineering practices evaluation
+    - Must be a single valid JSON object
+    
+    **STEP 2: Save Analysis (MANDATORY)**
+    - IMMEDIATELY after generating JSON, call save_analysis_result tool
+    - Parameters:
+      * analysis_data = your complete JSON output from Step 1 (as string)
+      * agent_name = "engineering_practices_agent"
+    - This persists your work for the report synthesizer
+    - DO NOT SKIP THIS STEP - the report synthesizer needs the saved artifact
     """.strip(),
-    tools=[evaluate_engineering_practices],
+    tools=[evaluate_engineering_practices, save_analysis_result],
     output_key="engineering_practices_analysis",  # Key for parallel agent results (matches orchestrator)
 )
 

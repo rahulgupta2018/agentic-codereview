@@ -6,7 +6,7 @@ Green software analysis agent following ADK parallel agent patterns
 import sys
 import logging
 from pathlib import Path
-from google.adk.agents import LlmAgent
+from google.adk.agents import Agent
 
 # Setup logging
 logger = logging.getLogger(__name__)
@@ -23,6 +23,7 @@ from util.llm_model import get_sub_agent_model
 
 # Import tools
 from tools.carbon_footprint_analyzer import analyze_carbon_footprint
+from tools.save_analysis_artifact import save_analysis_result
 
 # Get the centralized model instance
 logger.info("🔧 [carbon_emission_agent] Initializing Carbon Emission Agent")
@@ -30,8 +31,8 @@ agent_model = get_sub_agent_model()
 logger.info(f"🔧 [carbon_emission_agent] Model configured: {agent_model}")
 
 # Carbon Emission Agent optimized for ParallelAgent pattern
-logger.info("🔧 [carbon_emission_agent] Creating LlmAgent with carbon footprint analysis tools")
-carbon_emission_agent = LlmAgent(
+logger.info("🔧 [carbon_emission_agent] Creating Agent with carbon footprint analysis tools")
+carbon_emission_agent = Agent(
     name="carbon_emission_agent",
     model=agent_model,
     description="Analyzes environmental impact and energy efficiency of code",
@@ -121,8 +122,24 @@ carbon_emission_agent = LlmAgent(
     - DO NOT infer or hallucinate findings — use tool outputs only
     - DO NOT leave any fields empty; if no issues found, state "No issues found" or similar
     - ALWAYS call the analyze_carbon_footprint tool. Do not make up information.
+    
+    **CRITICAL: TWO-STEP PROCESS (DO BOTH STEPS):**
+    
+    **STEP 1: Generate JSON Analysis**
+    - Call analyze_carbon_footprint tool
+    - Output ONLY pure JSON (NO markdown fences, NO ```json, NO explanations)
+    - JSON must contain carbon emission analysis
+    - Must be a single valid JSON object
+    
+    **STEP 2: Save Analysis (MANDATORY)**
+    - IMMEDIATELY after generating JSON, call save_analysis_result tool
+    - Parameters:
+      * analysis_data = your complete JSON output from Step 1 (as string)
+      * agent_name = "carbon_emission_agent"
+    - This persists your work for the artifact storage for the report synthesizer
+    - DO NOT SKIP THIS STEP - the report synthesizer needs the saved artifact
     """.strip(),
-    tools=[analyze_carbon_footprint],
+    tools=[analyze_carbon_footprint, save_analysis_result],
     output_key="carbon_emission_analysis",  # Key for parallel agent results
 )
 

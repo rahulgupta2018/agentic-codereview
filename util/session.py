@@ -12,12 +12,16 @@ Based on ADK 1.17+ custom session services pattern:
 import json
 import os
 import uuid
+import logging
 from pathlib import Path
 from typing import Dict, Any, Optional, List
 from datetime import datetime
 
 from google.adk.sessions import BaseSessionService, Session
 from google.adk.cli.service_registry import get_service_registry
+
+# Setup logging
+logger = logging.getLogger(__name__)
 
 
 class JSONFileSessionService(BaseSessionService):
@@ -56,12 +60,14 @@ class JSONFileSessionService(BaseSessionService):
             storage_path = uri
             
         self.storage_dir = Path(storage_path).resolve()
+        logger.info(f"🔧 Creating storage directory: {self.storage_dir}")
         self.storage_dir.mkdir(parents=True, exist_ok=True)
         
         # Create sessions subdirectory
         self.sessions_dir = self.storage_dir / "sessions"
         self.sessions_dir.mkdir(exist_ok=True)
         
+        logger.info(f"✅ JSONFileSessionService initialized: {self.sessions_dir}")
         print(f"📁 JSONFileSessionService initialized: {self.sessions_dir}")
     
     def _get_session_file_path(self, app_name: str, user_id: str, session_id: str) -> Path:
@@ -141,9 +147,11 @@ class JSONFileSessionService(BaseSessionService):
         
         # Save to file
         file_path = self._get_session_file_path(app_name, user_id, session_id)
+        logger.info(f"💾 Saving session to: {file_path}")
         with open(file_path, 'w') as f:
             json.dump(self._session_to_dict(session), f, indent=2)
         
+        logger.info(f"✅ Created session: {session_id} for {user_id}@{app_name}")
         print(f"✅ Created session: {session_id} for {user_id}@{app_name}")
         return session
     
@@ -170,13 +178,17 @@ class JSONFileSessionService(BaseSessionService):
         file_path = self._get_session_file_path(app_name, user_id, session_id)
         
         if not file_path.exists():
+            logger.warning(f"❌ Session not found: {session_id}")
             return None
         
         try:
+            logger.debug(f"📖 Loading session from: {file_path}")
             with open(file_path, 'r') as f:
                 data = json.load(f)
+            logger.info(f"✅ Loaded session: {session_id}")
             return self._dict_to_session(data)
         except Exception as e:
+            logger.error(f"❌ Error loading session {session_id}: {e}", exc_info=True)
             print(f"⚠️  Error loading session {session_id}: {e}")
             return None
     
@@ -201,8 +213,10 @@ class JSONFileSessionService(BaseSessionService):
         session_dir = self.sessions_dir / app_name / user_id
         
         if not session_dir.exists():
+            logger.info(f"📂 No sessions found for {user_id}@{app_name}")
             return {"sessions": [], "total_count": 0}
         
+        logger.info(f"📋 Listing sessions in: {session_dir}")
         sessions = []
         for file_path in session_dir.glob("*.json"):
             try:
@@ -210,11 +224,13 @@ class JSONFileSessionService(BaseSessionService):
                     data = json.load(f)
                 sessions.append(self._dict_to_session(data))
             except Exception as e:
+                logger.error(f"❌ Error loading session file {file_path}: {e}")
                 print(f"⚠️  Error loading session file {file_path}: {e}")
                 continue
         
         # Sort by last update time (most recent first)
         sessions.sort(key=lambda s: s.last_update_time or 0, reverse=True)
+        logger.info(f"✅ Found {len(sessions)} sessions for {user_id}@{app_name}")
         
         return {
             "sessions": sessions,
@@ -241,8 +257,12 @@ class JSONFileSessionService(BaseSessionService):
         file_path = self._get_session_file_path(app_name, user_id, session_id)
         
         if file_path.exists():
+            logger.info(f"🗑️  Deleting session: {session_id}")
             file_path.unlink()
+            logger.info(f"✅ Session deleted: {session_id}")
             print(f"🗑️  Deleted session: {session_id}")
+        else:
+            logger.warning(f"⚠️  Session file not found for deletion: {session_id}")
     
     async def append_event(self, session: Session, event) -> Any:
         """
@@ -271,9 +291,11 @@ class JSONFileSessionService(BaseSessionService):
         # Update last update time
         session.last_update_time = datetime.now().timestamp()
         
+        logger.debug(f"💾 Persisting event to session: {session.id}")
         # Save updated session with all events
         with open(file_path, 'w') as f:
             json.dump(self._session_to_dict(session), f, indent=2)
+        logger.debug(f"✅ Event persisted to session file")
         
         return event
     
@@ -285,11 +307,14 @@ class JSONFileSessionService(BaseSessionService):
             Dictionary with default code review session state
         """
         # Try to load from mock data file if available
+        logger.debug("🔍 Loading initial session state...")
         mock_data = self._load_mock_data()
         if mock_data:
+            logger.info("✅ Loaded initial state from mock data")
             return mock_data
         
         # Fallback to default state
+        logger.info("⚙️  Using default initial session state")
         return {
             "user_name": "Code Reviewer",
             "review_history": [],
@@ -320,7 +345,10 @@ class JSONFileSessionService(BaseSessionService):
         mock_data_path = data_dir / "mock_session_data.json"
         
         if not mock_data_path.exists():
+            logger.debug(f"📂 Mock data file not found: {mock_data_path}")
             return None
+        
+        logger.info(f"📖 Loading mock data from: {mock_data_path}")
         
         try:
             with open(mock_data_path, 'r') as f:
@@ -371,6 +399,7 @@ class JSONFileSessionService(BaseSessionService):
                 "preferences_learning": mock_data.get("preferences_learning", {})
             }
         except Exception as e:
+            logger.error(f"❌ Could not load mock data: {e}", exc_info=True)
             print(f"⚠️  Could not load mock data: {e}")
             return None
 
@@ -400,8 +429,10 @@ def jsonfile_session_factory(uri: str, **kwargs) -> JSONFileSessionService:
 # Register with ADK service registry
 def register_session_service():
     """Register JSONFileSessionService with ADK service registry."""
+    logger.info("🔧 Registering jsonfile:// session service with ADK...")
     registry = get_service_registry()
     registry.register_session_service("jsonfile", jsonfile_session_factory)
+    logger.info("✅ Session service registered with ADK registry")
     print("✅ Registered jsonfile:// session service")
 
 
@@ -450,4 +481,5 @@ def get_initial_session_state() -> Dict[str, Any]:
 try:
     register_session_service()
 except Exception as e:
+    logger.error(f"❌ Could not register session service: {e}", exc_info=True)
     print(f"⚠️  Could not register session service: {e}")

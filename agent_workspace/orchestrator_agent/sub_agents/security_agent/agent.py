@@ -6,7 +6,7 @@ Simple security analysis agent following ADK parallel agent patterns
 import sys
 import logging
 from pathlib import Path
-from google.adk.agents import LlmAgent
+from google.adk.agents import Agent
 
 # Setup logging
 logger = logging.getLogger(__name__)
@@ -23,6 +23,7 @@ from util.llm_model import get_sub_agent_model
 
 # Import tools
 from tools.security_vulnerability_scanner import scan_security_vulnerabilities
+from tools.save_analysis_artifact import save_analysis_result
 
 # Get the centralized model instance
 logger.info("🔧 [security_agent] Initializing Security Analysis Agent")
@@ -30,8 +31,8 @@ agent_model = get_sub_agent_model()
 logger.info(f"🔧 [security_agent] Model configured: {agent_model}")
 
 # Security Agent optimized for ParallelAgent pattern
-logger.info("🔧 [security_agent] Creating LlmAgent with security scanning tools")
-security_agent = LlmAgent(
+logger.info("🔧 [security_agent] Creating Agent with security scanning tools")
+security_agent = Agent(
     name="security_agent",
     model=agent_model,
     description="Analyzes security vulnerabilities and compliance issues",
@@ -121,13 +122,23 @@ security_agent = LlmAgent(
         ]
     }    
     ```                
-    **Final Hard Rules:**
-    - Called scan_security_vulnerabilities
-	- JSON contains all three sections: vulnerabilities, owasp_top_10, best_practices
-	- Every issue includes: type, location, line, description, and actionable recommendation
-	- No markdown, natural language paragraphs, or user-facing summaries
+    **CRITICAL: TWO-STEP PROCESS (DO BOTH STEPS):**
+    
+    **STEP 1: Generate JSON Analysis**
+    - Call scan_security_vulnerabilities tool
+    - Output ONLY pure JSON (NO markdown fences, NO ```json, NO explanations)
+    - JSON must contain: vulnerabilities, owasp_top_10, best_practices
+    - Every issue includes: type, location, line, description, recommendation
+    
+    **STEP 2: Save Analysis (MANDATORY)**
+    - IMMEDIATELY after generating JSON, call save_analysis_result tool
+    - Parameters:
+      * analysis_data = your complete JSON output from Step 1 (as string)
+      * agent_name = "security_agent"
+    - This persists your work for the report synthesizer
+    - DO NOT SKIP THIS STEP - the report synthesizer needs the saved artifact
     """.strip(),
-    tools=[scan_security_vulnerabilities],
+    tools=[scan_security_vulnerabilities, save_analysis_result],
     output_key="security_analysis",  # Key for parallel agent results
 )
 

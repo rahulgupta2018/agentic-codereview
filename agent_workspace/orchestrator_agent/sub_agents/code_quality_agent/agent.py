@@ -25,6 +25,7 @@ from util.llm_model import get_sub_agent_model
 from tools.complexity_analyzer_tool import analyze_code_complexity
 from tools.static_analyzer_tool import analyze_static_code
 from tools.tree_sitter_tool import parse_code_ast
+from tools.save_analysis_artifact import save_analysis_result
 
 # Get the centralized model instance
 logger.info("🔧 [code_quality_agent] Initializing Code Quality Agent")
@@ -111,12 +112,23 @@ code_quality_agent = Agent(
     - DO NOT include any explanations outside the JSON structure.
     - Failure to comply will result in rejection of your response.
     - DO NOT infer or hallucinate findings — use tool outputs only
-    - DO NOT leave any fields empty; if no issues found, state "No issues found" or similar
-    - ALWAYS call all tools: analyze_code_complexity, analyze_static_code, parse_code_ast
-    - NEVER skip tool usage
-    - ALWAYS return a single JSON object as final output
+    **CRITICAL: TWO-STEP PROCESS (DO BOTH STEPS):**
+    
+    **STEP 1: Generate JSON Analysis**
+    - Call all tools: analyze_code_complexity, analyze_static_code, parse_code_ast
+    - Output ONLY pure JSON (NO markdown fences, NO ```json, NO explanations)
+    - JSON must contain: complexity_analysis, code_quality_assessment, recommendations
+    - Must be a single valid JSON object
+    
+    **STEP 2: Save Analysis (MANDATORY)**
+    - IMMEDIATELY after generating JSON, call save_analysis_result tool
+    - Parameters:
+      * analysis_data = your complete JSON output from Step 1 (as string)
+      * agent_name = "code_quality_agent"
+    - This persists your work for the report synthesizer
+    - DO NOT SKIP THIS STEP - the report synthesizer needs the saved artifact
     """.strip(),
-    tools=[analyze_code_complexity, analyze_static_code, parse_code_ast],
+    tools=[analyze_code_complexity, analyze_static_code, parse_code_ast, save_analysis_result],
     output_key="code_quality_analysis",  # Key for parallel agent results
 )
 

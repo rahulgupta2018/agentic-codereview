@@ -1,6 +1,10 @@
 """
 Simple Result Cache for Code Reviews
 Caches analysis results to avoid redundant LLM calls for identical code
+
+⚠️ STATUS: Phase 2 - Not Implemented
+This module exists but is not currently integrated into the orchestrator or agents.
+Cache functionality is planned for Phase 2 to handle duplicate code submissions.
 """
 
 import hashlib
