@@ -73,6 +73,7 @@ from .sub_agents.code_quality_agent.agent import code_quality_agent
 from .sub_agents.engineering_practices_agent.agent import engineering_practices_agent
 from .sub_agents.carbon_emission_agent.agent import carbon_emission_agent
 from .sub_agents.artifact_saver_agent.agent import artifact_saver_agent
+from .sub_agents.report_saver_agent.agent import report_saver_agent
 from .sub_agents.report_synthesizer_agent.agent import create_report_synthesizer_agent
 
 # DISABLED: Simplified sequential pipeline - see SIMPLIFIED_SEQUENTIAL_PIPELINE_DESIGN.md
@@ -129,6 +130,10 @@ class CodeReviewOrchestrator:
         # Step 4: Report Synthesizer
         self.report_synthesizer = create_report_synthesizer_agent()
         logger.info("✅ [Orchestrator] Report synthesizer loaded")
+        
+        # Step 5: Report Saver (saves final report to disk)
+        self.report_saver = report_saver_agent
+        logger.info("✅ [Orchestrator] Report saver loaded")
         
         # Step 4: GitHub Publisher
         self.github_publisher = github_publisher_agent
@@ -226,16 +231,18 @@ class CodeReviewOrchestrator:
         logger.info(f"   Step 2: {self.analysis_pipeline.name} (nested with {len(self.analysis_pipeline.sub_agents)} agents)")
         logger.info(f"   Step 3: {self.artifact_saver.name}")
         logger.info(f"   Step 4: {self.report_synthesizer.name}")
-        logger.info("   Step 5: github_publisher (DISABLED)")
+        logger.info(f"   Step 5: {self.report_saver.name}")
+        logger.info("   Step 6: github_publisher (DISABLED)")
         
         pipeline = SequentialAgent(
             name="GitHubPRReviewPipeline",
             sub_agents=[
                 self.github_fetcher_agent,  # Step 1: Fetch
                 self.analysis_pipeline,     # Step 2: Analyze (nested!)
-                self.artifact_saver,        # Step 3: Save artifacts
-                self.report_synthesizer,    # Step 4: Report
-                # self.github_publisher,    # Step 5: Publish (DISABLED - GitHub integration not yet implemented)
+                self.artifact_saver,        # Step 3: Save analysis artifacts
+                self.report_synthesizer,    # Step 4: Generate report
+                self.report_saver,          # Step 5: Save report to disk
+                # self.github_publisher,    # Step 6: Publish (DISABLED - GitHub integration not yet implemented)
             ],
             description="Complete GitHub PR review workflow - simplified sequential pipeline"
         )
