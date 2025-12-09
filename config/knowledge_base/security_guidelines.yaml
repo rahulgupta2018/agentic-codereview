@@ -1,0 +1,88 @@
+version: "1.0"
+title: "Security Review Guidelines"
+scope: "application_code_review"
+
+categories:
+  - name: "Input Validation & Sanitization"
+    rules:
+      - "Validate all external inputs (HTTP, CLI, env vars, database, queues)."
+      - "Prefer allow-lists over block-lists for critical fields."
+      - "Sanitize or escape inputs used in SQL, shell commands, HTML, or logs."
+
+  - name: "Authentication & Authorization"
+    rules:
+      - "Do not implement custom password hashing; use established libraries."
+      - "Ensure all protected endpoints validate identity and authorization."
+      - "Never pass tokens or secrets via URL query parameters."
+      - "Avoid bypassing permission checks."
+
+  - name: "Secrets Management"
+    rules:
+      - "Do not hard-code secrets (API keys, tokens, passwords)."
+      - "Never log secrets at any level."
+      - "Use environment variables or secret managers for sensitive values."
+      - "Rotate and revoke exposed secrets promptly."
+
+  - name: "Data Protection"
+    rules:
+      - "Avoid logging or exposing sensitive user data."
+      - "Encrypt sensitive data in transit and at rest."
+      - "Do not leak internal details in error messages returned to clients."
+
+  - name: "Injection & Unsafe Calls"
+    rules:
+      - "Use parameterized queries for all database operations."
+      - "Do not build SQL, shell commands, or HTML with untrusted string concatenation."
+      - "Avoid eval, exec, or dynamic code execution on untrusted data."
+
+  - name: "Dependencies & Libraries"
+    rules:
+      - "Use trusted, actively-maintained libraries."
+      - "Avoid deprecated or vulnerable APIs."
+      - "Keep security checks (TLS verification, CSRF) enabled unless justified."
+
+  - name: "Error Handling & Logging"
+    rules:
+      - "Do not expose sensitive data in error messages."
+      - "Use structured logs without secrets."
+      - "Log security-relevant exceptions with enough context to investigate."
+
+owasp_top_10_2021:
+  a01_broken_access_control:
+    rules:
+      - "Verify authorization for every protected resource"
+      - "Deny by default; explicit allow-lists only"
+    cwe: ["CWE-22", "CWE-284", "CWE-639"]
+  
+  a02_cryptographic_failures:
+    rules:
+      - "Use TLS 1.2+ for all network communication"
+      - "Never implement custom encryption"
+    cwe: ["CWE-327", "CWE-328"]
+  
+  a03_injection:
+    rules:
+      - "Use parameterized queries (prevents CWE-89 SQL Injection)"
+      - "Escape all user data in shell commands (prevents CWE-78)"
+      - "Use template engines with auto-escaping (prevents CWE-79 XSS)"
+    cwe: ["CWE-79", "CWE-89", "CWE-78"]
+
+security_testing:
+  - "Run SAST (Static Analysis) on every commit"
+  - "Dependency scanning for known CVEs (npm audit, pip-audit, Snyk)"
+  - "Secret scanning in commits and logs"
+  - "Container image scanning if using Docker"
+
+web_security:
+  cors:
+    - "Restrict CORS origins to known domains only"
+    - "Never use Access-Control-Allow-Origin: *"
+  csrf:
+    - "Use CSRF tokens for state-changing operations"
+    - "Validate tokens on server side"
+  clickjacking:
+    - "Set X-Frame-Options: DENY or SAMEORIGIN"
+
+rate_limiting:
+  - "Implement rate limiting on authentication endpoints"
+  - "Limit API requests per user/IP (prevent DoS)"

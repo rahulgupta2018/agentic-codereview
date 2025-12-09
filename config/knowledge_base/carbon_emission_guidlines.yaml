@@ -1,0 +1,70 @@
+version: "1.0"
+title: "Carbon & Resource Efficiency Standards"
+
+general_principles:
+  - "Minimize unnecessary computation, I/O, and network activity."
+  - "Reuse data or results instead of recomputing."
+  - "Focus on eliminating clearly wasteful work rather than premature micro-optimizations."
+
+algorithmic_efficiency:
+  - "Choose appropriate algorithms and data structures based on expected input sizes."
+  - "Avoid O(N^2) or worse operations over large collections."
+  - "Cache or reuse filtered or computed lists rather than recalculating."
+
+resource_usage:
+  cpu:
+    - "Avoid heavy computations inside tight loops unless necessary."
+    - "Prefer vectorized or batched operations when available."
+  memory:
+    - "Avoid loading entire large datasets into memory; prefer streaming or pagination."
+  network:
+    - "Batch outbound requests instead of firing many small ones."
+    - "Avoid redundant API calls for the same data."
+
+database_efficiency:
+  - "Avoid N+1 query patterns; use joins or bulk operations."
+  - "Use indexes appropriately to avoid full table scans."
+  - "Store only necessary data; avoid duplication unless required for performance."
+
+task_scheduling:
+  - "Use event-driven or scheduled tasks instead of tight polling loops."
+  - "Avoid overly aggressive cron intervals."
+  - "Combine related background tasks when reasonable."
+
+external_services:
+  - "Cache stable or slow-changing API responses."
+  - "Avoid retry storms; fail fast when a downstream system is clearly down."
+  - "Log and monitor expensive external calls."
+
+observability_for_efficiency:
+  - "Add metrics for CPU-heavy loops, DB queries, and external calls."
+  - "Log enough context to identify performance issues without excessive volume."
+  - "Monitor for hotspots and regressions periodically."
+
+metrics:
+  - "Measure energy per transaction (joules/request)"
+  - "Track total carbon footprint (gCO2e) for key workflows"
+  - "Monitor CPU time, memory allocations, network bytes"
+
+green_software_principles:
+  carbon_awareness:
+    - "Schedule batch jobs during grid low-carbon hours"
+    - "Use carbon-aware SDKs (e.g., Carbon Aware SDK)"
+  energy_proportionality:
+    - "Scale down resources during low-traffic periods"
+    - "Use autoscaling to match load"
+  carbon_efficiency:
+    - "Choose energy-efficient programming languages (Rust > Python for CPU)"
+    - "Optimize hot paths that run frequently"
+
+cloud_optimization:
+  - "Use spot/preemptible instances for fault-tolerant workloads"
+  - "Right-size instances (avoid over-provisioning)"
+  - "Use ARM-based instances where available (lower energy)"
+  - "Leverage cloud provider carbon-neutral regions"
+
+ai_ml_specific:
+  - "Quantize models to reduce inference costs"
+  - "Use smaller models when accuracy trade-off acceptable"
+  - "Cache model predictions when inputs repeat"
+  - "Track carbon cost of training (use ML CO2 Impact calculator)"

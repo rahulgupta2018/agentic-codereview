@@ -1,0 +1,76 @@
+version: "1.0"
+title: "Code Quality Guidelines"
+
+readability:
+  - "Use clear, descriptive names for variables, functions, classes, and modules."
+  - "Keep functions small and focused on a single responsibility."
+  - "Avoid deeply nested conditionals; use guard clauses or helper functions."
+  - "Prefer straightforward, readable logic over clever shortcuts."
+  - "Maintain reasonable line lengths and logical code grouping."
+
+structure_and_design:
+  - "Follow existing project structure and architectural conventions."
+  - "Separate concerns: keep business logic, data access, and UI layers distinct."
+  - "Avoid duplicating logic; extract reusable helpers or shared modules."
+  - "Prefer composition over inheritance when possible."
+  - "Limit the surface area of public APIs."
+
+error_handling:
+  - "Handle expected failure cases explicitly."
+  - "Never swallow exceptions silently; log or rethrow with actionable context."
+  - "Use error messages that aid debugging and troubleshooting."
+  - "Use typed exceptions where applicable."
+
+testing:
+  - "All new logic must include unit or integration tests for key paths."
+  - "Test both normal behavior and edge cases."
+  - "Tests must be deterministic and avoid external shared state."
+  - "Test names should clearly describe intended behavior."
+
+performance_and_complexity:
+  - "Use appropriate data structures for operational scale."
+  - "Avoid unnecessary repeated work, especially inside loops."
+  - "Consider time and space complexity when operating over large collections."
+  - "Optimize only based on observed data, not assumptions."
+
+style_and_consistency:
+  - "Follow project-specific style guides (PEP8, ESLint rules, etc.)."
+  - "Use consistent patterns already present in the codebase."
+  - "Organize imports cleanly; remove unused code and dead logic."
+
+documentation_and_comments:
+  - "Document assumptions and non-obvious design decisions."
+  - "Avoid redundant comments that repeat the code."
+  - "Maintain accurate docstrings that reflect real behavior."
+
+solid_principles:
+  single_responsibility: "Each class/module should have one reason to change"
+  open_closed: "Open for extension, closed for modification"
+  liskov_substitution: "Subtypes must be substitutable for base types"
+  interface_segregation: "Many specific interfaces better than one general"
+  dependency_inversion: "Depend on abstractions, not concretions"
+
+code_smells:
+  - "God Objects (classes doing too much)"
+  - "Long Parameter Lists (>3-4 parameters)"
+  - "Duplicate Code (DRY violation)"
+  - "Dead Code (unused functions/variables)"
+  - "Magic Numbers (use named constants)"
+  - "Nested Callbacks/Promises (callback hell)"
+
+complexity_thresholds:
+  cyclomatic_complexity:
+    excellent: "< 5"
+    good: "5-10"
+    acceptable: "10-15"
+    needs_refactor: "> 15"
+    critical: "> 20"
+  cognitive_complexity:
+    target: "< 15"
+    max_acceptable: "< 25"
+  function_length:
+    ideal: "< 20 lines"
+    max: "< 50 lines"
+  file_length:
+    target: "< 300 lines"
+    max: "< 500 lines" 

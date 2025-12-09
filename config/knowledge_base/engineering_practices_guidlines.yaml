@@ -1,0 +1,71 @@
+version: "1.0"
+title: "Engineering Practices Guidelines"
+
+change_scope_and_clarity:
+  - "PRs must have a clear purpose and narrowly-scoped changes."
+  - "Do not mix unrelated refactors, features, and formatting."
+  - "PR descriptions must clearly state the problem, solution, and trade-offs."
+
+testing_practices:
+  - "Features require tests for both expected paths and edge cases."
+  - "Bug fixes must include tests that fail before the fix and pass after."
+  - "Avoid global state or test-order dependencies."
+  - "Favor deterministic, fast tests."
+
+observability_and_operability:
+  - "Instrument key code paths with actionable logs at appropriate levels."
+  - "Avoid noisy or redundant logging."
+  - "Add metrics and traces for performance-critical or high-risk workflows."
+  - "Ensure error messages aid debugging without leaking sensitive details."
+
+backwards_compatibility:
+  - "Consider impact on existing APIs, schemas, and configurations."
+  - "Deprecate features with clear migration paths."
+  - "Provide migrations for schema or data changes."
+
+reliability_and_resilience:
+  - "Use retry-with-backoff for transient failures."
+  - "Avoid single points of failure; design for graceful degradation."
+  - "Do not block request threads with long-running operations."
+
+collaboration_and_maintainability:
+  - "Follow repository conventions for naming and structure."
+  - "Keep PRs small enough to be reviewable."
+  - "Remove dead code and outdated configs."
+  - "Document behavior that is counterintuitive or domain-critical."
+
+documentation_and_developer_experience:
+  - "Keep README and architectural docs updated when design changes."
+  - "Provide usage examples for new APIs."
+  - "Add inline comments for non-obvious logic or invariants."
+
+ci_cd:
+  - "All PRs must pass automated tests before merge"
+  - "Build artifacts in CI; never on developer machines"
+  - "Run linters, security scans, and tests in pipeline"
+  - "Automated deployment to staging on merge"
+
+code_review:
+  pr_size:
+    ideal: "< 200 lines changed"
+    max: "< 400 lines (split if larger)"
+  review_turnaround: "< 24 hours for review"
+  required_approvals: "At least 1 approval from code owner"
+  self_review: "Author must review their own diff before requesting review"
+
+deployment_safety:
+  - "Use feature flags for risky changes"
+  - "Implement circuit breakers for external dependencies"
+  - "Have rollback plan for every deployment"
+  - "Monitor key metrics for 30 minutes post-deployment"
+
+sre_practices:
+  slos:
+    - "Define Service Level Objectives (e.g., 99.9% uptime)"
+    - "Track error budget and slow down when budget exhausted"
+  monitoring:
+    - "Alert on SLO violations, not symptoms"
+    - "Keep alert fatigue low; remove noisy alerts"
+  incident_response:
+    - "Conduct blameless post-mortems for incidents"
+    - "Document runbooks for common issues"
