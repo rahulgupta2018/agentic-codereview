@@ -1,0 +1,9 @@
+{
+  "version": "1",
+  "name": "Agentic Code Review API",
+  "type": "collection",
+  "ignore": [
+    "node_modules",
+    ".git"
+  ]
+}

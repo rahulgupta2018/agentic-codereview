@@ -11,12 +11,15 @@ Architecture:
 ✅ GitHubPRReviewPipeline (SequentialAgent) - ROOT AGENT:
   ├─ github_fetcher_agent                    (Step 1: Fetch PR data)
   ├─ AnalysisPipeline (SequentialAgent)      (Step 2: Run all analyses)
-  │   ├─ security_agent                      (Always runs)
-  │   ├─ code_quality_agent                  (Always runs)
-  │   ├─ engineering_agent                   (Always runs)
-  │   └─ carbon_agent                        (Always runs)
-  ├─ report_synthesizer_agent                (Step 3: Synthesize report)
-  └─ github_publisher_agent                  (Step 4: Publish to GitHub)
+  |   ├─ github_data_adapter_agent           (Step 2.1: Transform GitHub PR file data)
+  │   ├─ security_agent                      (Step 2.2: Security analysis)
+  │   ├─ code_quality_agent                  (Step 2.3: Code quality analysis)
+  │   ├─ engineering_agent                   (Step 2.4: Engineering practices analysis)
+  │   └─ carbon_agent                        (Step 2.5: Carbon emission analysis)
+  ├─ artifact_saver_agent                    (Step 3: Save analysis artifacts)
+  ├─ report_synthesizer_agent                (Step 4: Synthesize report)
+  ├─ report_saver_agent                      (Step 5: Save final report)
+  └─ github_publisher_agent                  (Step 6: Publish to GitHub)
 
 Design: Simple, deterministic, maintainable.
 All agents run every time - no dynamic routing or planning complexity.
@@ -152,7 +155,7 @@ class CodeReviewOrchestrator:
         logger.info("ℹ️  [Orchestrator] Disabled: classifier, planning, dynamic router (see design doc)")
         
         # =====================================================================
-        # BUILD SIMPLIFIED SEQUENTIAL PIPELINE
+        # BUILD SEQUENTIAL PIPELINE
         # =====================================================================
         
         # Create nested analysis pipeline first
@@ -244,7 +247,7 @@ class CodeReviewOrchestrator:
                 self.report_saver,          # Step 5: Save report to disk
                 # self.github_publisher,    # Step 6: Publish (DISABLED - GitHub integration not yet implemented)
             ],
-            description="Complete GitHub PR review workflow - simplified sequential pipeline"
+            description="Complete GitHub PR review workflow from fetching to analysis to reporting"
         )
         
         logger.info(f"✅ [_create_github_pr_review_pipeline] Created GitHubPRReviewPipeline with {len(pipeline.sub_agents)} top-level steps")
@@ -305,5 +308,5 @@ logger.info("")
 logger.info("✅ [Orchestrator] Simplified Sequential Pipeline ready")
 logger.info(f"✅ [Orchestrator] Root agent: {root_agent.name}")
 logger.info(f"✅ [Orchestrator] Pipeline: Fetch → Analyze ({analysis_count} agents) → Report → Publish")
-logger.info("ℹ️  [Orchestrator] All agents run deterministically - no dynamic routing")
+logger.info("ℹ️  [Orchestrator] All agents run deterministically")
 logger.info("")

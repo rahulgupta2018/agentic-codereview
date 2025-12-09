@@ -1,0 +1,69 @@
+meta {
+  name: 2. Run Pipeline
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/run_sse
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "appName": "{{appName}}",
+    "userId": "{{userId}}",
+    "sessionId": "{{sessionId}}",
+    "newMessage": {
+      "role": "user",
+      "parts": [
+        {
+          "text": "Please review the code in this PR"
+        }
+      ]
+    }
+  }
+}
+
+script:pre-request {
+  const sessionId = bru.getEnvVar("sessionId");
+  if (!sessionId) {
+    throw new Error("❌ No sessionId set. Run '1. Create Session' first!");
+  }
+  console.log("📤 Running pipeline for session:", sessionId);
+}
+
+script:post-response {
+  if (res.status === 200) {
+    console.log("✅ Pipeline completed successfully");
+    console.log("⏱️  Response time:", res.responseTime, "ms");
+  } else {
+    console.log("❌ Pipeline failed with status:", res.status);
+  }
+}
+
+tests {
+  test("status is 200", function() {
+    expect(res.status).to.equal(200);
+  });
+}
+
+docs {
+  # Run Pipeline
+  
+  This endpoint triggers the complete code review pipeline:
+  
+  1. GitHub Fetcher - Fetches PR data (uses mock data if MOCK_GITHUB=true)
+  2. Analysis Pipeline (5 agents):
+     - GitHub Data Adapter - Transforms data
+     - Security Agent - Scans vulnerabilities
+     - Code Quality Agent - Analyzes quality
+     - Engineering Practices Agent - Evaluates practices
+     - Carbon Emission Agent - Assesses environmental impact
+  3. Artifact Saver - Saves analysis JSON files
+  4. Report Synthesizer - Generates comprehensive report
+  5. Report Saver - Saves markdown report
+  
+  **Note:** This can take 3-5 minutes to complete!
+}

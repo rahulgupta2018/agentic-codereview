@@ -1,0 +1,113 @@
+meta {
+  name: 3. Get Session State
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/apps/{{appName}}/users/{{userId}}/sessions/{{sessionId}}
+  body: none
+  auth: none
+}
+
+script:pre-request {
+  const sessionId = bru.getEnvVar("sessionId");
+  if (!sessionId) {
+    throw new Error("❌ No sessionId set. Run '1. Create Session' first!");
+  }
+  console.log("🔍 Checking session:", sessionId);
+}
+
+script:post-response {
+  if (res.status === 200) {
+    const state = res.body.state || {};
+    const keys = Object.keys(state);
+    
+    console.log("\n📋 Session State Keys:", keys.length);
+    console.log(keys.sort().join(", "));
+    
+    // Check GitHub Data Adapter outputs
+    console.log("\n🔬 GitHub Data Adapter Outputs:");
+    const adapterKeys = ['code', 'language', 'file_path', 'files_prepared', 'file_count', 'total_lines'];
+    adapterKeys.forEach(key => {
+      if (state[key]) {
+        if (key === 'code') {
+          console.log(`   ✅ ${key}: ${state[key].length} chars`);
+        } else {
+          console.log(`   ✅ ${key}: ${state[key]}`);
+        }
+      } else {
+        console.log(`   ❌ ${key}: MISSING`);
+      }
+    });
+    
+    // Check Analysis outputs
+    console.log("\n🔬 Analysis Agent Outputs:");
+    const analysisKeys = [
+      'security_analysis',
+      'code_quality_analysis', 
+      'engineering_practices_analysis',
+      'carbon_emission_analysis'
+    ];
+    analysisKeys.forEach(key => {
+      if (state[key]) {
+        const len = typeof state[key] === 'string' ? state[key].length : JSON.stringify(state[key]).length;
+        console.log(`   ✅ ${key}: ${len} chars`);
+      } else {
+        console.log(`   ❌ ${key}: MISSING`);
+      }
+    });
+    
+    // Check final report
+    console.log("\n📄 Final Report:");
+    if (state.final_report) {
+      console.log(`   ✅ Generated: ${state.final_report.length} chars`);
+      console.log(`   Preview: ${state.final_report.substring(0, 200)}...`);
+    } else {
+      console.log("   ❌ NOT GENERATED");
+    }
+  }
+}
+
+tests {
+  test("status is 200", function() {
+    expect(res.status).to.equal(200);
+  });
+  
+  test("has state", function() {
+    expect(res.body.state).to.be.an('object');
+  });
+  
+  test("adapter ran successfully", function() {
+    const state = res.body.state;
+    expect(state.files_prepared).to.equal(true);
+    expect(state.file_count).to.be.a('number');
+  });
+  
+  test("all 4 analyses completed", function() {
+    const state = res.body.state;
+    expect(state.security_analysis).to.exist;
+    expect(state.code_quality_analysis).to.exist;
+    expect(state.engineering_practices_analysis).to.exist;
+    expect(state.carbon_emission_analysis).to.exist;
+  });
+  
+  test("final report generated", function() {
+    const state = res.body.state;
+    expect(state.final_report).to.be.a('string');
+    expect(state.final_report.length).to.be.greaterThan(0);
+  });
+}
+
+docs {
+  # Get Session State
+  
+  Retrieves the complete session state including:
+  
+  - GitHub PR metadata and files
+  - Data adapter outputs (code, language, file_path, etc.)
+  - All 4 analysis results (security, quality, engineering, carbon)
+  - Final comprehensive report
+  
+  Use this to verify the pipeline executed successfully and check results.
+}

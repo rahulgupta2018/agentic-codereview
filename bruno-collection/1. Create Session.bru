@@ -1,0 +1,40 @@
+meta {
+  name: 1. Create Session
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/apps/{{appName}}/users/{{userId}}/sessions
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "state": {
+      "github_context": {
+        "repo": "test-org/test-repo",
+        "pr_number": 42
+      }
+    }
+  }
+}
+
+script:post-response {
+  if (res.status === 200) {
+    const sessionId = res.body.id;
+    bru.setEnvVar("sessionId", sessionId);
+    console.log("✅ Session created:", sessionId);
+  }
+}
+
+tests {
+  test("status is 200", function() {
+    expect(res.status).to.equal(200);
+  });
+  
+  test("session has id", function() {
+    expect(res.body.id).to.be.a('string');
+  });
+}
