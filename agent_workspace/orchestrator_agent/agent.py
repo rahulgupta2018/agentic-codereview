@@ -1,37 +1,37 @@
 """
-Deterministic Workflow Orchestrator
+Simplified Sequential Pipeline Orchestrator
 
-Following Google ADK best practices with SequentialAgent and PlanReActPlanner.
+Following simplified deterministic architecture - see SIMPLIFIED_SEQUENTIAL_PIPELINE_DESIGN.md
 
 PRIORITY: GitHub Pipeline (Production Integration)
-EXECUTION: Sequential (Accuracy over Speed)
+EXECUTION: Sequential (Deterministic, Predictable)
 
 Architecture:
 -----------
-✅ GitHubPipeline (SequentialAgent) - ROOT AGENT:
-  ├─ github_fetcher_agent
-  ├─ planning_agent
-  ├─ dynamic_router_agent (SequentialAgent - runs agents one-by-one)
-  │   ├─ security_agent          (1st - completes fully)
-  │   ├─ code_quality_agent      (2nd - completes fully)
-  │   ├─ engineering_agent       (3rd - completes fully)
-  │   └─ carbon_agent            (4th - completes fully)
-  ├─ report_synthesizer_agent
-  └─ github_publisher_agent
+✅ GitHubPRReviewPipeline (SequentialAgent) - ROOT AGENT:
+  ├─ github_fetcher_agent                    (Step 1: Fetch PR data)
+  ├─ AnalysisPipeline (SequentialAgent)      (Step 2: Run all analyses)
+  │   ├─ security_agent                      (Always runs)
+  │   ├─ code_quality_agent                  (Always runs)
+  │   ├─ engineering_agent                   (Always runs)
+  │   └─ carbon_agent                        (Always runs)
+  ├─ report_synthesizer_agent                (Step 3: Synthesize report)
+  └─ github_publisher_agent                  (Step 4: Publish to GitHub)
 
-Design: Sequential execution prioritizes accuracy over speed.
-Each agent completes before the next starts - perfect for async PR reviews.
+Design: Simple, deterministic, maintainable.
+All agents run every time - no dynamic routing or planning complexity.
 
-⏸️  WebPipeline - DEFERRED (ADK single-parent constraint):
-  Note: Cannot create both pipelines simultaneously.
-  Future: Implement agent cloning pattern.
+DISABLED Components (kept for reference):
+- ❌ classifier_agent (not needed for GitHub webhooks)
+- ❌ planning_agent (not needed - all agents run every time)
+- ❌ dynamic_router_agent (not needed - simple sequential execution)
 
 Key Design Principles:
-- ✅ Deterministic workflows using SequentialAgent
-- ✅ PlanReActPlanner for intelligent agent selection
-- ✅ DynamicRouterAgent for runtime agent selection
-- ✅ No custom orchestration logic
-- ✅ Pure ADK patterns throughout
+- ✅ Deterministic workflows - same agents, same order, every time
+- ✅ No LLM-based routing decisions
+- ✅ ADK built-in artifact system
+- ✅ Clear separation: Fetch → Analyze → Report → Publish
+- ✅ Nested AnalysisPipeline for maintainability
 """
 
 import sys
@@ -47,29 +47,39 @@ logger = logging.getLogger(__name__)
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 
-# Initialize services
-from util.artifact_service import FileArtifactService
-from util.session import JSONFileSessionService
-from util.service_registry import register_services
+# NOTE: Service initialization removed - ADK provides these when running via `adk api_server`
+# The adk api_server command initializes session and artifact services automatically
+# based on command-line arguments (--session_service_uri, etc.)
+# 
+# If you need to run this orchestrator standalone (without adk api_server),
+# uncomment the following lines:
+#
+# from util.artifact_service import FileArtifactService
+# from util.session import JSONFileSessionService
+# from util.service_registry import register_services
+# _artifact_service = FileArtifactService(base_dir="../storage_bucket/artifacts")
+# _session_service = JSONFileSessionService(uri="jsonfile://../storage_bucket")
+# register_services(artifact_service=_artifact_service, session_service=_session_service)
+# logger.info("✅ Services initialized: FileArtifactService and JSONFileSessionService")
 
-# Using ../storage_bucket to go up from agent_workspace/ to project root
-_artifact_service = FileArtifactService(base_dir="../storage_bucket/artifacts")
-# Note: JSONFileSessionService creates a 'sessions' subdirectory inside storage_bucket
-_session_service = JSONFileSessionService(uri="jsonfile://../storage_bucket")
-register_services(artifact_service=_artifact_service, session_service=_session_service)
-logger.info("✅ Services initialized: FileArtifactService and JSONFileSessionService")
+logger.info("ℹ️  [Orchestrator] Using ADK-provided services (session + artifact)")
 
-# Import all sub-agents
+# Import sub-agents for simplified sequential pipeline
 from .sub_agents.github_fetcher_agent.agent import github_fetcher_agent
 from .sub_agents.github_publisher_agent.agent import github_publisher_agent
-from .sub_agents.classifier_agent.agent import classifier_agent
-from .sub_agents.planning_agent.agent import create_planning_agent
+from .sub_agents.github_data_adapter_agent.agent import github_data_adapter_agent
 from .sub_agents.security_agent.agent import security_agent
 from .sub_agents.code_quality_agent.agent import code_quality_agent
 from .sub_agents.engineering_practices_agent.agent import engineering_practices_agent
 from .sub_agents.carbon_emission_agent.agent import carbon_emission_agent
+from .sub_agents.artifact_saver_agent.agent import artifact_saver_agent
 from .sub_agents.report_synthesizer_agent.agent import create_report_synthesizer_agent
-from .sub_agents.dynamic_router_agent.agent import DynamicRouterAgent
+
+# DISABLED: Simplified sequential pipeline - see SIMPLIFIED_SEQUENTIAL_PIPELINE_DESIGN.md
+# These components are not needed in the deterministic pipeline:
+# from .sub_agents.classifier_agent.agent import classifier_agent
+# from .sub_agents.planning_agent.agent import create_planning_agent
+# from .sub_agents.dynamic_router_agent.agent import DynamicRouterAgent
 
 
 # =========================================================================
@@ -78,143 +88,160 @@ from .sub_agents.dynamic_router_agent.agent import DynamicRouterAgent
 
 class CodeReviewOrchestrator:
     """
-    Deterministic workflow orchestrator using Google ADK patterns.
+    Simplified sequential pipeline orchestrator.
     
-    This orchestrator uses ADK best practices:
-    - Uses SequentialAgent for deterministic workflow execution
-    - Dynamic routing based on source detection (GitHub vs Web UI)
-    - PlanningAgent uses PlanReActPlanner for intelligent agent selection
-    - ExecutionPipeline created dynamically based on planning output
+    Architecture: Simple, deterministic, maintainable
+    - All analysis agents run in sequence, every time
+    - No dynamic routing or planning complexity
+    - Clear flow: Fetch → Analyze → Report → Publish
+    
+    See: SIMPLIFIED_SEQUENTIAL_PIPELINE_DESIGN.md
     """
     
     def __init__(self):
-        """Initialize orchestrator with all sub-agents and workflows."""
+        """Initialize orchestrator with simplified sequential pipeline."""
         
-        logger.info("🚀 [Orchestrator] Initializing Deterministic Workflow Orchestrator")
-        
-        # =====================================================================
-        # PIPELINE-SPECIFIC SUB-AGENTS
-        # =====================================================================
-        
-        # GitHub-specific agents
-        self.github_fetcher = github_fetcher_agent
-        self.github_publisher = github_publisher_agent
-        logger.info("✅ [Orchestrator] GitHub agents loaded")
-        
-        # Web UI-specific agents
-        self.classifier = classifier_agent
-        logger.info("✅ [Orchestrator] Classifier agent loaded")
+        logger.info("="*80)
+        logger.info("🚀 [Orchestrator.__init__] STARTING Orchestrator Initialization")
+        logger.info("="*80)
         
         # =====================================================================
-        # LEVEL 3: SHARED SUB-AGENTS (used by both pipelines)
+        # LOAD SUB-AGENTS
         # =====================================================================
         
-        # Create separate instances for each pipeline to avoid parent conflicts
-        # GitHub planning agent reads from github_pr_data (not request_classification)
-        from .sub_agents.planning_agent.agent import planning_agent_github
-        self.planning_agent_github = planning_agent_github
-        self.planning_agent_web = create_planning_agent("web")
-        self.report_synthesizer_github = create_report_synthesizer_agent()
-        self.report_synthesizer_web = create_report_synthesizer_agent()
-        logger.info("✅ [Orchestrator] Planning and report synthesizer agents loaded")
+        # Step 1: GitHub Fetcher
+        self.github_fetcher_agent = github_fetcher_agent
+        logger.info("✅ [Orchestrator] GitHub fetcher loaded")
         
-        # =====================================================================
-        # LEVEL 4: ANALYSIS SUB-AGENTS (selected dynamically by PlanningAgent)
-        # =====================================================================
-        
+        # Step 2: Analysis agents (will be nested in AnalysisPipeline)
+        self.github_data_adapter_agent = github_data_adapter_agent
         self.security_agent = security_agent
         self.code_quality_agent = code_quality_agent
         self.engineering_agent = engineering_practices_agent
         self.carbon_agent = carbon_emission_agent
-        logger.info("✅ [Orchestrator] Analysis agents loaded")
+        logger.info("✅ [Orchestrator] GitHub data adapter loaded")
+        logger.info("✅ [Orchestrator] Analysis agents loaded (4 agents)")
+        
+        # Step 3: Artifact Saver (saves analysis results to disk)
+        self.artifact_saver = artifact_saver_agent
+        logger.info("✅ [Orchestrator] Artifact saver loaded")
+        
+        # Step 4: Report Synthesizer
+        self.report_synthesizer = create_report_synthesizer_agent()
+        logger.info("✅ [Orchestrator] Report synthesizer loaded")
+        
+        # Step 4: GitHub Publisher
+        self.github_publisher = github_publisher_agent
+        logger.info("✅ [Orchestrator] GitHub publisher loaded")
         
         # =====================================================================
-        # AGENT REGISTRY FOR DYNAMIC ROUTING
+        # DISABLED COMPONENTS (kept for reference)
         # =====================================================================
+        # These are commented out but not deleted - see SIMPLIFIED_SEQUENTIAL_PIPELINE_DESIGN.md
+        #
+        # self.classifier = classifier_agent  # Not needed for GitHub webhooks
+        # self.planning_agent = create_planning_agent()  # Not needed - all agents run
+        # self.dynamic_router = DynamicRouterAgent(...)  # Not needed - simple sequential
+        # self.analysis_agent_registry = {...}  # Not needed - no dynamic routing
         
-        logger.info("🔧 [Orchestrator] Creating agent registry for dynamic routing...")
-        
-        self.analysis_agent_registry = {
-            "security": self.security_agent,
-            "code_quality": self.code_quality_agent,
-            "engineering": self.engineering_agent,
-            "carbon": self.carbon_agent,
-        }
-        
-        logger.info(f"✅ [Orchestrator] Agent registry created with {len(self.analysis_agent_registry)} agents")
+        logger.info("ℹ️  [Orchestrator] Disabled: classifier, planning, dynamic router (see design doc)")
         
         # =====================================================================
-        # DYNAMIC ROUTER AGENTS
+        # BUILD SIMPLIFIED SEQUENTIAL PIPELINE
         # =====================================================================
         
-        logger.info("🔧 [Orchestrator] Creating dynamic router agent...")
+        # Create nested analysis pipeline first
+        self.analysis_pipeline = self._create_analysis_pipeline()
+        agent_count = len(self.analysis_pipeline.sub_agents) if hasattr(self.analysis_pipeline, 'sub_agents') else 0
+        logger.info(f"✅ [Orchestrator] Analysis pipeline created (nested) with {agent_count} agents")
+        if agent_count > 0:
+            agent_names = [a.name for a in self.analysis_pipeline.sub_agents]
+            logger.info(f"   └─ Agents: {', '.join(agent_names)}")
         
-        # Single router instance used in both pipelines
-        # All analysis agents run in parallel via ParallelAgent
-        self.dynamic_router = DynamicRouterAgent(
-            agent_registry=self.analysis_agent_registry
-        )
-        
-        logger.info("✅ [Orchestrator] Dynamic router agent created")
-        
-        # =====================================================================
-        # BUILD WORKFLOW HIERARCHY
-        # =====================================================================
-        
-        # GitHub Pipeline is root for production integration
-        # Web Pipeline deferred due to ADK single-parent constraint
-        self.root_agent = self._create_github_pipeline()
-        logger.info("✅ [Orchestrator] Root agent: GitHubPipeline (production priority)")
-        logger.info("⏸️  [Orchestrator] Web pipeline: Deferred (ADK single-parent constraint)")
+        # Create main GitHub PR review pipeline
+        logger.info("🔧 [Orchestrator.__init__] Creating main GitHub PR review pipeline...")
+        self.root_agent = self._create_github_pr_review_pipeline()
+        logger.info(f"✅ [Orchestrator.__init__] Root agent created: {self.root_agent.name}")
+        logger.info("="*80)
+        logger.info("✅ [Orchestrator.__init__] Initialization COMPLETE")
+        logger.info("="*80)
     
     # =========================================================================
-    # WORKFLOW CONSTRUCTION
+    # PIPELINE CONSTRUCTION
     # =========================================================================
     
-    def _create_github_pipeline(self) -> SequentialAgent:
+    def _create_analysis_pipeline(self) -> SequentialAgent:
         """
-        Create GitHub webhook processing pipeline.
+        Create nested analysis pipeline.
+        
+        Encapsulates data adapter + all 4 analysis agents for maintainability.
+        All agents run sequentially, every time (deterministic).
         
         Pipeline Flow:
-        1. GitHubFetcher → Fetch PR data from GitHub
-        2. PlanningAgent → Decide which analysis agents to run
-        3. DynamicRouterAgent → Read plan, dynamically execute selected agents
-        4. ReportSynthesizer → Consolidate results and generate markdown report
-        
-        NOTE: GitHub Publisher disabled (no GitHub integration configured)
+        0. GitHub Data Adapter → Transform PR data for analysis tools
+        1. Security Agent
+        2. Code Quality Agent
+        3. Engineering Practices Agent
+        4. Carbon Emission Agent
         """
-        return SequentialAgent(
-            name="GitHubPipeline",
+        logger.info("🔧 [_create_analysis_pipeline] Building nested AnalysisPipeline...")
+        logger.info(f"   Agent 0: {self.github_data_adapter_agent.name}")
+        logger.info(f"   Agent 1: {self.security_agent.name}")
+        logger.info(f"   Agent 2: {self.code_quality_agent.name}")
+        logger.info(f"   Agent 3: {self.engineering_agent.name}")
+        logger.info(f"   Agent 4: {self.carbon_agent.name}")
+        
+        pipeline = SequentialAgent(
+            name="AnalysisPipeline",
             sub_agents=[
-                self.github_fetcher,
-                self.planning_agent_github,
-                self.dynamic_router,
-                self.report_synthesizer_github
-                # self.github_publisher  # DISABLED - no GitHub integration
+                self.github_data_adapter_agent,  # Step 0: Prepare data
+                self.security_agent,              # Step 1: Security
+                self.code_quality_agent,          # Step 2: Quality
+                self.engineering_agent,           # Step 3: Engineering
+                self.carbon_agent,                # Step 4: Carbon
             ],
-            description="GitHub webhook processing pipeline with report generation"
+            description="Transform GitHub PR data and run all code analysis agents sequentially"
         )
+        
+        logger.info(f"✅ [_create_analysis_pipeline] Created AnalysisPipeline with {len(pipeline.sub_agents)} sub-agents")
+        return pipeline
     
-    def _create_web_pipeline(self) -> SequentialAgent:
+    def _create_github_pr_review_pipeline(self) -> SequentialAgent:
         """
-        Create Web UI request processing pipeline.
+        Create main GitHub PR review pipeline.
         
-        STATUS: DEFERRED - Cannot create due to ADK single-parent constraint.
-        GitHub pipeline has priority for production integration.
+        Simple, deterministic, easy to understand.
         
-        Pipeline Flow (Future):
-        1. Classifier → Classify user intent and code presence
-        2. PlanningAgent → Decide which analysis agents to run
-        3. DynamicRouterAgent → Execute all agents in parallel
-        4. ReportSynthesizer → Consolidate results into markdown report
+        Pipeline Flow:
+        1. GitHub Fetcher → Fetch PR data from GitHub API
+        2. Analysis Pipeline → Run all 5 analysis agents (nested: adapter + 4 analyses)
+        3. Artifact Saver → Save all analysis results to disk
+        4. Report Synthesizer → Generate comprehensive markdown report
+        5. GitHub Publisher → Post review to GitHub PR (DISABLED - not yet implemented)
         
-        TODO: Implement agent cloning pattern to support multiple pipelines.
+        Design: All agents run every time, no dynamic routing.
         """
-        raise NotImplementedError(
-            "Web pipeline deferred due to ADK single-parent constraint. "
-            "GitHub pipeline has priority. Use GitHub pipeline with mock data for testing, "
-            "or implement agent cloning pattern to support both pipelines."
+        logger.info("🔧 [_create_github_pr_review_pipeline] Building GitHubPRReviewPipeline...")
+        logger.info(f"   Step 1: {self.github_fetcher_agent.name}")
+        logger.info(f"   Step 2: {self.analysis_pipeline.name} (nested with {len(self.analysis_pipeline.sub_agents)} agents)")
+        logger.info(f"   Step 3: {self.artifact_saver.name}")
+        logger.info(f"   Step 4: {self.report_synthesizer.name}")
+        logger.info("   Step 5: github_publisher (DISABLED)")
+        
+        pipeline = SequentialAgent(
+            name="GitHubPRReviewPipeline",
+            sub_agents=[
+                self.github_fetcher_agent,  # Step 1: Fetch
+                self.analysis_pipeline,     # Step 2: Analyze (nested!)
+                self.artifact_saver,        # Step 3: Save artifacts
+                self.report_synthesizer,    # Step 4: Report
+                # self.github_publisher,    # Step 5: Publish (DISABLED - GitHub integration not yet implemented)
+            ],
+            description="Complete GitHub PR review workflow - simplified sequential pipeline"
         )
+        
+        logger.info(f"✅ [_create_github_pr_review_pipeline] Created GitHubPRReviewPipeline with {len(pipeline.sub_agents)} top-level steps")
+        return pipeline
     
     # =========================================================================
     # EXECUTION METHODS
@@ -224,50 +251,52 @@ class CodeReviewOrchestrator:
         """
         Get the root agent for ADK Runner.
         
-        This is the entry point for `adk web` and returns WebPipeline.
+        Returns the simplified sequential GitHub PR review pipeline.
         """
+        logger.info(f"📤 [get_agent] Returning root_agent: {self.root_agent.name}")
+        logger.info(f"   Root agent has {len(self.root_agent.sub_agents) if hasattr(self.root_agent, 'sub_agents') else 0} sub-agents")
         return self.root_agent
     
     def get_github_pipeline(self) -> SequentialAgent:
         """
-        Get the GitHub pipeline for webhook processing.
+        Get the GitHub PR review pipeline.
         
-        This returns the root agent (GitHub pipeline).
+        Returns the simplified sequential pipeline (same as root).
         """
+        logger.info(f"📤 [get_github_pipeline] Returning GitHub pipeline: {self.root_agent.name}")
         return self.root_agent
-    
-    def get_web_pipeline(self) -> SequentialAgent:
-        """
-        Get the Web UI pipeline.
-        
-        STATUS: Not available due to ADK single-parent constraint.
-        """
-        raise NotImplementedError(
-            "Web pipeline not available. GitHub pipeline is the root agent."
-        )
 
 
 # =========================================================================
 # MODULE-LEVEL EXPORTS
 # =========================================================================
 
+logger.info("")
+logger.info("🔥 [MODULE] Creating singleton CodeReviewOrchestrator instance...")
+logger.info("🔥 [MODULE] This happens when agent.py is imported by ADK")
+logger.info("")
+
 # Create singleton orchestrator instance
 _orchestrator = CodeReviewOrchestrator()
 
-# Export root_agent for backward compatibility and ADK CLI (Web UI)
+# Export root_agent for backward compatibility and ADK CLI
+logger.info("📤 [MODULE] Calling _orchestrator.get_agent() to export root_agent...")
 root_agent = _orchestrator.get_agent()
 orchestrator_agent = root_agent  # Alias for backward compatibility
 
-# Export orchestrator for accessing other pipelines programmatically
+# Export orchestrator for programmatic access
 orchestrator = _orchestrator
 
-# Note: Don't create github_pipeline_agent at module level because
-# agents can only have one parent. Call orchestrator.get_github_pipeline()
-# when needed in API endpoints.
+logger.info("")
+logger.info("🎯 [MODULE] Module-level exports complete:")
+logger.info(f"   root_agent = {root_agent.name}")
+logger.info(f"   orchestrator_agent = {orchestrator_agent.name}")
+logger.info(f"   orchestrator = <CodeReviewOrchestrator instance>")
 
-# Export orchestrator instance for advanced usage
-orchestrator = _orchestrator
-
-logger.info("✅ [Orchestrator] Deterministic Workflow Orchestrator ready")
-logger.info(f"✅ [Orchestrator] Root agent: {root_agent.name} (GitHub integration)")
-logger.info("⏸️  [Orchestrator] Web pipeline: Deferred (ADK single-parent constraint)")
+analysis_count = len(_orchestrator.analysis_pipeline.sub_agents) if hasattr(_orchestrator.analysis_pipeline, 'sub_agents') else 0
+logger.info("")
+logger.info("✅ [Orchestrator] Simplified Sequential Pipeline ready")
+logger.info(f"✅ [Orchestrator] Root agent: {root_agent.name}")
+logger.info(f"✅ [Orchestrator] Pipeline: Fetch → Analyze ({analysis_count} agents) → Report → Publish")
+logger.info("ℹ️  [Orchestrator] All agents run deterministically - no dynamic routing")
+logger.info("")

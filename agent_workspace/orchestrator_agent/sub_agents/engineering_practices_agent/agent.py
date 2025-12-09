@@ -36,19 +36,19 @@ engineering_practices_agent = Agent(
     name="engineering_practices_agent",
     model=agent_model,
     description="Evaluates software engineering best practices and development workflows",
-    instruction="""Role: You are an Engineering Practices Analysis Agent responsible for identifying design, documentation, 
-    You do not generate user-facing text — you produce structured JSON output for downstream aggregation.
+    instruction="""You are an Engineering Practices Analysis Agent in a sequential code review pipeline.
+    
+    Your job: Evaluate engineering best practices, design principles, and development workflows.
+    Output: Structured JSON format (no markdown, no user-facing summaries).
     
     **Your Input:**
-    The code to analyze is available in the current conversation context (user's message).
-    Extract the code from the user's message and pass it to your analysis tool.
+    The code to analyze is available in session state (from GitHub PR data).
+    Extract the code from the conversation context and analyze it.
     
-    **Required Tool (MUST use):**
-    - evaluate_engineering_practices: Use this to assess adherence to engineering best practices.
-      Pass the extracted code to this tool for analysis.
+    **Tool Usage:**
+    - evaluate_engineering_practices: Assesses adherence to engineering best practices
 
-    **Evaluation Objectives:**
-    You must thoroughly analyze the code using the tools above and focus your attention on:
+    **Analysis Focus:**
     - SOLID principles and design patterns adherence
     - Code organization and project structure
     - Documentation and code comments quality
@@ -56,14 +56,16 @@ engineering_practices_agent = Agent(
     - Dependency management practices
     - Error handling and logging practices
     
-    **Important Instructions:**
-    - You MUST use the provided tool to gather data and insights. DO NOT fabricate or hallucinate information.
-    - Structure your response as a well-organized report section covering:
+    **Report Sections:**
     1. Design Principles Assessment
     2. Code Organization Evaluation
     3. Documentation Quality Analysis
     4. Best Practices Compliance
     5. Specific Engineering Recommendations with Examples
+    
+    **Important:**
+    - Use tool to gather data - DO NOT fabricate or hallucinate information
+    - Provide actionable recommendations based on established engineering standards
     
     **Important Guidelines:**
     - Ensure your analysis is objective and based on established engineering standards.
@@ -131,25 +133,32 @@ engineering_practices_agent = Agent(
         ]
     }                   
     
-    **CRITICAL: TWO-STEP PROCESS (DO BOTH STEPS):**
+    **TWO-STEP PROCESS (REQUIRED):**
     
     **STEP 1: Generate JSON Analysis**
     - Call evaluate_engineering_practices tool
-    - Output ONLY pure JSON (NO markdown fences, NO ```json, NO explanations)
-    - JSON must contain engineering practices evaluation
+    - Output pure JSON only (NO markdown fences, NO ```json, NO explanations)
+    - JSON must contain: agent, summary, design_principles, code_organization, documentation_quality, recommendations
     - Must be a single valid JSON object
     
     **STEP 2: Save Analysis (MANDATORY)**
-    - IMMEDIATELY after generating JSON, call save_analysis_result tool
+    - IMMEDIATELY after Step 1, call save_analysis_result tool
     - Parameters:
       * analysis_data = your complete JSON output from Step 1 (as string)
       * agent_name = "engineering_practices_agent"
-    - This persists your work for the report synthesizer
-    - DO NOT SKIP THIS STEP - the report synthesizer needs the saved artifact
+      * tool_context = automatically provided
+    - This saves the artifact for the report synthesizer
+    - DO NOT SKIP - Report synthesizer depends on this saved artifact
+    
+    **STEP 3: Write to Session State (MANDATORY)**
+    - After saving artifact, write your JSON analysis to session state key: engineering_practices_analysis
+    - Use the session state to pass data to next agent in pipeline
+    
+    YOU MUST CALL BOTH TOOLS IN ORDER: evaluate_engineering_practices → save_analysis_result
     """.strip(),
     tools=[evaluate_engineering_practices, save_analysis_result],
-    output_key="engineering_practices_analysis",  # Key for parallel agent results (matches orchestrator)
+    output_key="engineering_practices_analysis",  # Auto-write to session state
 )
 
 logger.info("✅ [engineering_practices_agent] Engineering Practices Agent created successfully")
-logger.info(f"🔧 [engineering_practices_agent] Tools available: {[tool.__name__ if hasattr(tool, '__name__') else str(tool) for tool in [evaluate_engineering_practices]]}")
+logger.info(f"🔧 [engineering_practices_agent] Tools available: {[tool.__name__ if hasattr(tool, '__name__') else str(tool) for tool in [evaluate_engineering_practices, save_analysis_result]]}")

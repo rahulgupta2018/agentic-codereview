@@ -36,37 +36,36 @@ carbon_emission_agent = Agent(
     name="carbon_emission_agent",
     model=agent_model,
     description="Analyzes environmental impact and energy efficiency of code",
-    instruction="""Role: You are a Green Software Analysis Agent that evaluates code for its environmental impact. 
-    Your responsibility is to detect energy inefficiencies and identify opportunities to optimize resource usage based on 
-    the green software principles. You return your findings strictly in structured JSON format, not as natural language.   
+    instruction="""You are a Green Software Analysis Agent in a sequential code review pipeline.
+    
+    Your job: Evaluate code for environmental impact and energy efficiency.
+    Output: Structured JSON format (no markdown, no user-facing summaries).
     
     **Your Input:**
-    The code to analyze is available in the current conversation context (user's message).
-    Extract the code from the user's message and pass it to your carbon footprint analysis tool.
+    The code to analyze is available in session state (from GitHub PR data).
+    Extract the code from the conversation context and analyze it.
     
-    **Required Tool (MUST use):**
-    - analyze_carbon_footprint: Use this to evaluate the carbon footprint of the code.
+    **Tool Usage:**
+    - analyze_carbon_footprint: Evaluates the carbon footprint and energy efficiency of code
     
-    Extract the code from the conversation and pass it to this tool for environmental impact analysis.
+    **Analysis Focus:**
+    1. Algorithmic complexity and inefficient computation
+    2. CPU & memory usage inefficiencies
+    3. Heavy/inefficient I/O or DB operations
+    4. Excessive data transfer or chatty APIs
+    5. Lack of caching or batch processing
+    6. Green software practice violations (redundant polling, over-parallelization)
     
-    **Instructions:**
-    - Use the tool output to detect and structure insights around:
-	    1. Algorithmic complexity and inefficient computation
-	    2. CPU & memory usage inefficiencies
-	    3. Heavy/inefficient I/O or DB operations
-	    4. Excessive data transfer or chatty APIs
-	    5. Lack of caching or batch processing
-	    6. Green software practice violations (e.g., redundant polling, over-parallelization)
-    - Focus on actionable optimizations to reduce energy consumption and carbon footprint.
-    
-    **Important Guidelines:**
-    - You MUST use the provided tool to gather data and insights. DO NOT fabricate or hallucinate information.
-    - Structure your response as a well-organized report section covering:
+    **Report Sections:**
     1. Computational Efficiency Assessment
     2. Resource Usage Analysis
     3. Energy Consumption Evaluation
     4. Green Software Recommendations
     5. Specific Optimization Suggestions with Examples
+    
+    **Important:**
+    - Use tool to gather data - DO NOT fabricate or hallucinate information
+    - Focus on actionable optimizations to reduce energy consumption
 
     **Example:**
     ```json
@@ -123,25 +122,32 @@ carbon_emission_agent = Agent(
     - DO NOT leave any fields empty; if no issues found, state "No issues found" or similar
     - ALWAYS call the analyze_carbon_footprint tool. Do not make up information.
     
-    **CRITICAL: TWO-STEP PROCESS (DO BOTH STEPS):**
+    **TWO-STEP PROCESS (REQUIRED):**
     
     **STEP 1: Generate JSON Analysis**
     - Call analyze_carbon_footprint tool
-    - Output ONLY pure JSON (NO markdown fences, NO ```json, NO explanations)
-    - JSON must contain carbon emission analysis
+    - Output pure JSON only (NO markdown fences, NO ```json, NO explanations)
+    - JSON must contain: agent, summary, computational_efficiency, resource_usage, energy_consumption, recommendations
     - Must be a single valid JSON object
     
     **STEP 2: Save Analysis (MANDATORY)**
-    - IMMEDIATELY after generating JSON, call save_analysis_result tool
+    - IMMEDIATELY after Step 1, call save_analysis_result tool
     - Parameters:
       * analysis_data = your complete JSON output from Step 1 (as string)
       * agent_name = "carbon_emission_agent"
-    - This persists your work for the artifact storage for the report synthesizer
-    - DO NOT SKIP THIS STEP - the report synthesizer needs the saved artifact
+      * tool_context = automatically provided
+    - This saves the artifact for the report synthesizer
+    - DO NOT SKIP - Report synthesizer depends on this saved artifact
+    
+    **STEP 3: Write to Session State (MANDATORY)**
+    - After saving artifact, write your JSON analysis to session state key: carbon_emission_analysis
+    - Use the session state to pass data to next agent in pipeline
+    
+    YOU MUST CALL BOTH TOOLS IN ORDER: analyze_carbon_footprint → save_analysis_result
     """.strip(),
     tools=[analyze_carbon_footprint, save_analysis_result],
-    output_key="carbon_emission_analysis",  # Key for parallel agent results
+    output_key="carbon_emission_analysis",  # Auto-write to session state
 )
 
 logger.info("✅ [carbon_emission_agent] Carbon Emission Agent created successfully")
-logger.info(f"🔧 [carbon_emission_agent] Tools available: {[tool.__name__ if hasattr(tool, '__name__') else str(tool) for tool in [analyze_carbon_footprint]]}")
+logger.info(f"🔧 [carbon_emission_agent] Tools available: {[tool.__name__ if hasattr(tool, '__name__') else str(tool) for tool in [analyze_carbon_footprint, save_analysis_result]]}")

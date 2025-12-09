@@ -1,9 +1,11 @@
 # Simplified Sequential Agent Pipeline Design
 
-**Status**: Design Review (December 8, 2025)  
+**Status**: ✅ Design Complete - Ready for Review (December 8, 2025)  
 **Date**: December 8, 2025  
+**Last Updated**: December 8, 2025 - Artifact system verified  
 **Architecture Pattern**: Deterministic Sequential Pipeline  
 **Priority**: GitHub Integration with ADK Built-in Artifacts  
+**Artifact Solution**: ✅ Custom FileArtifactService (already implemented)  
 **Inspiration**: [ADK Sequential Workflows](https://raphaelmansuy.github.io/adk_training/docs/sequential_workflows)
 
 ---
@@ -300,24 +302,39 @@ async def scan_security_vulnerabilities(
 
 ### Artifact Organization
 
-ADK organizes artifacts by:
-- **Session ID**: Each API request gets unique session
-- **User ID**: Identified from API request
-- **App Name**: `orchestrator_agent`
+**Our Implementation**: Custom `FileArtifactService` (extends ADK's `BaseArtifactService`)
 
-**Expected Structure** (managed by ADK):
+ADK organizes artifacts by:
+- **App Name**: `orchestrator_agent`
+- **User ID**: Identified from API request
+- **Subdirectory**: Automatically determined by filename pattern
+
+**Actual Storage Structure** (managed by `FileArtifactService`):
 ```
-ADK_STORAGE/
-└── artifacts/
-    └── orchestrator_agent/
-        └── <user_id>/
-            └── <session_id>/
-                ├── security_analysis.json
-                ├── quality_analysis.json
-                ├── engineering_analysis.json
-                ├── carbon_analysis.json
-                └── final_report.md
+storage_bucket/artifacts/
+└── orchestrator_agent/
+    └── <user_id>/
+        ├── inputs/                          # code_input_*, input_*
+        │   └── code_input_12345.py
+        │       └── code_input_12345.py.meta.json
+        ├── sub_agent_outputs/               # analysis_*
+        │   ├── security_analysis.json
+        │   │   └── security_analysis.json.meta.json
+        │   ├── quality_analysis.json
+        │   ├── engineering_analysis.json
+        │   └── carbon_analysis.json
+        ├── reports/                         # report_*
+        │   └── final_report.md
+        │       └── final_report.md.meta.json
+        └── other/                           # everything else
 ```
+
+**Key Features**:
+- ✅ **Persistent** - files saved to disk, survive server restarts
+- ✅ **No cloud dependency** - local file storage
+- ✅ **Metadata tracking** - `.meta.json` files with timestamps, sizes, versions
+- ✅ **Automatic categorization** - filename patterns determine subdirectory
+- ✅ **ADK compatible** - implements `BaseArtifactService` interface
 
 ### Loading Artifacts (Report Synthesizer)
 
@@ -424,18 +441,80 @@ async def synthesize_report(
 
 ---
 
+## 🔧 Artifact Service Configuration
+
+### Current Setup (Already Working)
+
+**Service Implementation**: `util/artifact_service.py`
+```python
+class FileArtifactService(BaseArtifactService):
+    """Custom file-based artifact storage extending ADK's BaseArtifactService"""
+    
+    def __init__(self, base_dir: str = "./artifacts"):
+        self.base_dir = Path(base_dir)
+        # Creates storage_bucket/artifacts/ structure
+    
+    async def save_artifact(
+        self, *, app_name, user_id, filename, artifact, 
+        session_id=None, custom_metadata=None
+    ) -> int:
+        # Saves to {base_dir}/{app_name}/{user_id}/{subdir}/{filename}
+        # Creates .meta.json with metadata
+        return 1  # version number
+    
+    async def load_artifact(
+        self, *, app_name, user_id, filename, 
+        session_id=None, version=None
+    ) -> Optional[types.Part]:
+        # Loads from subdirectories (searches all)
+        return types.Part(text=content)
+    
+    async def list_artifact_keys(
+        self, *, app_name, user_id, session_id=None
+    ) -> list[str]:
+        # Returns list of relative paths
+        return ["sub_agent_outputs/security_analysis.json", ...]
+```
+
+**Runner Configuration**: Already configured in `main.py` and `agent.py`
+```python
+from util.artifact_service import FileArtifactService
+
+artifact_service = FileArtifactService(base_dir="../storage_bucket/artifacts")
+
+runner = Runner(
+    agent=orchestrator_agent,
+    artifact_service=artifact_service,  # ← ADK uses this for all artifact calls
+    session_service=session_service
+)
+```
+
+**How It Works**:
+1. Agent calls `tool_context.save_artifact(filename, artifact)`
+2. ADK routes to our `FileArtifactService.save_artifact()`
+3. Service saves file to disk with automatic subdirectory selection
+4. Metadata saved alongside as `.meta.json`
+5. Files persist across server restarts
+
+**No Changes Needed** - Current artifact setup is production-ready!
+
+---
+
 ## 🚀 Implementation Plan
 
 ### Phase 1: Update Orchestrator (2-3 hours)
 
-1. **Remove complexity**:
+1. **Disable unused complexity** (do NOT delete - keep for reference):
    ```python
-   # DELETE these agents/components:
-   - classifier_agent/
-   - planning_agent/
-   - dynamic_router_agent/
-   - Agent registry dict
-   - Proxy selection tools
+   # DISABLE these agents/components by commenting out:
+   # - classifier_agent/ imports and initialization
+   # - planning_agent/ imports and initialization
+   # - dynamic_router_agent/ imports and initialization
+   # - Agent registry dict (comment out)
+   # - Proxy selection tools (comment out in tool list)
+   
+   # Add comments explaining why disabled:
+   # "Disabled for simplified sequential pipeline - see SIMPLIFIED_SEQUENTIAL_PIPELINE_DESIGN.md"
    ```
 
 2. **Create analysis pipeline**:
@@ -545,24 +624,334 @@ session.state = {
 
 ---
 
-## 🔍 Open Questions
+## 🔍 Open Questions - ✅ RESOLVED
 
-1. **ADK Artifact API**: 
-   - Does ADK 1.17.0 provide `tool_context.load_artifact(filename)`?
-   - Or do we need `tool_context.list_artifacts()` + query?
-   - Check ADK documentation for artifact retrieval APIs
+### 1. **ADK Artifact API** - ✅ CONFIRMED
+   - ✅ **ADK 1.17.0 provides full artifact API** via `CallbackContext` (parent of `ToolContext`):
+     - `async def save_artifact(filename: str, artifact: types.Part) -> int`
+     - `async def load_artifact(filename: str, version: Optional[int] = None) -> Optional[types.Part]`
+     - `async def list_artifacts() -> list[str]`
+   - ✅ **Custom `FileArtifactService` already implemented** in `util/artifact_service.py`
+     - Extends `BaseArtifactService` (ADK's abstract base class)
+     - Provides persistent local file storage
+     - Directory structure: `./artifacts/{app_name}/{user_id}/`
+       - `inputs/` - Code files
+       - `reports/` - Final reports
+       - `sub_agent_outputs/` - Analysis results
+       - `other/` - Miscellaneous
+     - Saves with `.meta.json` metadata files
+     - Already tested and working in codebase
+   - ✅ **No need for ADK version change** - Current setup is optimal
 
-2. **GitHub Publisher**:
-   - Should it load report from artifacts or session state?
-   - Artifacts are more reliable (persisted)
+### 2. **GitHub Publisher** - ✅ DECIDED
+   - ✅ **Load report from artifacts** using `tool_context.load_artifact("final_report.md")`
+   - Artifacts are persistent and reliable
+   - Session state is ephemeral - use artifacts as source of truth
 
-3. **Error Handling**:
-   - If analysis agent fails, should pipeline continue?
-   - Or stop and return partial results?
+### 3. **Error Handling** - ✅ DECIDED
+   - ✅ **Option A: Stop and return partial results (safer)**
+   - If any analysis agent fails, pipeline stops immediately
+   - Partial results available in session state and artifacts
+   - Clear error reporting to user
+   - Can add Option B (continue on error) later if needed for resilience
 
-4. **Artifact Cleanup**:
-   - Should old artifacts be deleted after PR closes?
-   - Retention policy (30 days, 90 days)?
+### 4. **Artifact Cleanup** - ✅ DECIDED
+   - ✅ **Implement in Phase 2** after core pipeline is stable
+   - Will add cleanup policy after validating core functionality
+   - Considerations for Phase 2:
+     - Retention policy (30/60/90 days)
+     - Cleanup trigger (manual/scheduled/event-based)
+     - Archive vs delete strategy
+     - Disk space monitoring
+
+---
+
+## 🔧 Implementation Issue: Data Format Mismatch
+
+### Problem Discovered During Testing (December 8, 2025)
+
+**Symptom**: Pipeline executes successfully but analysis tools cannot process the code.
+
+**Root Cause**: Data format mismatch between GitHub Fetcher and Analysis Tools:
+
+```
+GitHub Fetcher Output:
+├─ session.state["github_pr_files"] = [
+│    {
+│      "filename": "ChatPanel.tsx",
+│      "content": "import React...",      ← Full file content (string)
+│      "language": "typescript",
+│      "status": "added",
+│      "additions": 378,
+│      "patch": "@@ -0,0 +1,378 @@..."
+│    }
+│  ]
+
+Analysis Tools Expected Input:
+├─ tool_context.state["code"] = "..."      ← Raw code string
+├─ tool_context.state["language"] = "..."  ← Language identifier
+├─ tool_context.state["file_path"] = "..." ← File path
+OR
+├─ Repository path on disk to scan
+```
+
+**Impact**:
+- ✅ Pipeline architecture works correctly
+- ✅ All agents execute in sequence
+- ❌ Tools return empty results ("No code provided")
+- ❌ Final report shows no analysis findings
+
+### Solution: GitHub Data Adapter Tool
+
+**Option 1: Create GitHub Data Adapter Tool** ⭐ **RECOMMENDED**
+
+This tool bridges the gap between GitHub API data structures and analysis tool expectations.
+
+---
+
+## 🛠️ GitHub Data Adapter Tool Design
+
+### Purpose
+
+Transform GitHub PR file data from `github_pr_files` session state into format that existing analysis tools can consume.
+
+### Key Responsibilities
+
+1. **Extract code from GitHub data structures**
+2. **Prepare code for each analysis tool**
+3. **Handle multiple files in PR**
+4. **Preserve file context (filename, language, metadata)**
+
+### Tool Specification
+
+```python
+# tools/github_data_adapter.py
+
+def prepare_files_for_analysis(tool_context: ToolContext) -> Dict[str, Any]:
+    """
+    Adapt GitHub PR files data for analysis tools.
+    
+    Reads github_pr_files from session state and transforms into
+    format that analysis tools expect (code, language, file_path).
+    
+    Input (from session.state["github_pr_files"]):
+        [
+            {
+                "filename": "src/ChatPanel.tsx",
+                "content": "import React...",
+                "language": "typescript",
+                "status": "added",
+                "additions": 378,
+                "deletions": 0,
+                "patch": "..."
+            },
+            ...
+        ]
+    
+    Output (stored in session.state):
+        {
+            "files_prepared": True,
+            "file_count": 2,
+            "files": [
+                {
+                    "file_path": "src/ChatPanel.tsx",
+                    "code": "import React...",
+                    "language": "typescript",
+                    "lines": 378,
+                    "status": "added"
+                },
+                ...
+            ],
+            "current_file_index": 0,
+            
+            # Current file ready for tools
+            "code": "import React...",              ← For analysis tools
+            "language": "typescript",               ← For analysis tools
+            "file_path": "src/ChatPanel.tsx"        ← For analysis tools
+        }
+    
+    Returns:
+        {
+            "status": "success",
+            "files_prepared": 2,
+            "message": "Prepared 2 files for analysis"
+        }
+    """
+```
+
+### Integration into Sequential Pipeline
+
+**Updated Step 2: Analysis Pipeline** (with adapter)
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│ STEP 2: Analysis Pipeline (SequentialAgent - NESTED)         │
+├──────────────────────────────────────────────────────────────┤
+│                                                               │
+│ ┌────────────────────────────────────────────────────────┐  │
+│ │ 2.0 GitHub Data Adapter (NEW - First in pipeline)     │  │
+│ │ ────────────────────────                               │  │
+│ │ Purpose: Transform GitHub PR data for analysis tools   │  │
+│ │                                                         │  │
+│ │ Input:  session.state["github_pr_files"]              │  │
+│ │ Tool:   prepare_files_for_analysis()                  │  │
+│ │ Output: session.state["code"] = "..."                 │  │
+│ │         session.state["language"] = "..."             │  │
+│ │         session.state["file_path"] = "..."            │  │
+│ │         session.state["files"] = [...]                │  │
+│ │                                                         │  │
+│ │ Strategy:                                              │  │
+│ │ • Extract all files from github_pr_files              │  │
+│ │ • Combine multi-file PRs into single analysis context │  │
+│ │ • OR analyze each file separately (configurable)      │  │
+│ │ • Set current file context for analysis tools         │  │
+│ └────────────────────────────────────────────────────────┘  │
+│                        ↓                                      │
+│ ┌────────────────────────────────────────────────────────┐  │
+│ │ 2a. Security Agent                                     │  │
+│ │ ──────────────────                                     │  │
+│ │ Tools: scan_security_vulnerabilities()                 │  │
+│ │        ↓ reads tool_context.state["code"]             │  │
+│ │        ↓ reads tool_context.state["language"]         │  │
+│ │        ↓ reads tool_context.state["file_path"]        │  │
+│ └────────────────────────────────────────────────────────┘  │
+│                        ↓                                      │
+│ ┌────────────────────────────────────────────────────────┐  │
+│ │ 2b. Code Quality Agent                                 │  │
+│ │ ───────────────────                                    │  │
+│ │ Tools: analyze_code_complexity()                       │  │
+│ │        analyze_static_code()                           │  │
+│ │        parse_code_ast()                                │  │
+│ │        ↓ All read from tool_context.state["code"]     │  │
+│ └────────────────────────────────────────────────────────┘  │
+│                        ↓                                      │
+│ │ 2c. Engineering Practices Agent                        │  │
+│ │ 2d. Carbon Emission Agent                              │  │
+│                                                               │
+└──────────────────────────────────────────────────────────────┘
+```
+
+### Multi-File PR Handling Strategy
+
+**Strategy A: Concatenate All Files** ⭐ **RECOMMENDED FOR PHASE 1**
+
+```python
+# Combine all files into single analysis context
+combined_code = ""
+for file in github_pr_files:
+    combined_code += f"\n\n# File: {file['filename']}\n"
+    combined_code += f"# Language: {file['language']}\n"
+    combined_code += file['content']
+    combined_code += "\n\n"
+
+session.state["code"] = combined_code
+session.state["language"] = "multi"  # or dominant language
+session.state["file_path"] = "PR_combined"
+```
+
+**Benefits**:
+- Simple to implement
+- Agents see full PR context
+- Cross-file issue detection possible
+- Works with current tools unchanged
+
+**Limitations**:
+- Large PRs may hit token limits
+- Language-specific tools may struggle with multi-language
+
+**Strategy B: Analyze Files Separately** (FUTURE - Phase 2)
+
+```python
+# Run each analysis agent multiple times (once per file)
+for file in github_pr_files:
+    session.state["code"] = file['content']
+    session.state["language"] = file['language']
+    session.state["file_path"] = file['filename']
+    
+    # Run all 4 analysis agents for this file
+    await security_agent.run_async(ctx)
+    await quality_agent.run_async(ctx)
+    await engineering_agent.run_async(ctx)
+    await carbon_agent.run_async(ctx)
+    
+    # Aggregate results per file
+```
+
+**Benefits**:
+- Better for large multi-file PRs
+- Language-specific tools work better
+- More granular per-file findings
+
+**Limitations**:
+- More complex orchestration
+- Misses cross-file issues
+- Requires result aggregation logic
+
+### Implementation Steps
+
+**Phase 1: Minimum Viable Adapter**
+
+1. **Create tool**: `tools/github_data_adapter.py`
+   - Implement `prepare_files_for_analysis()` function
+   - Use Strategy A (concatenate all files)
+   - Store prepared data in session state
+
+2. **Create agent**: `agent_workspace/orchestrator_agent/sub_agents/github_data_adapter_agent/`
+   - Simple LLM agent with one tool
+   - Instruction: "Call prepare_files_for_analysis() to transform GitHub PR data"
+   - No complex logic needed
+
+3. **Update AnalysisPipeline** in orchestrator:
+   ```python
+   def _create_analysis_pipeline(self) -> SequentialAgent:
+       return SequentialAgent(
+           name="AnalysisPipeline",
+           sub_agents=[
+               self.github_data_adapter,      # ← NEW (Step 0)
+               self.security_agent,           # Step 1
+               self.code_quality_agent,       # Step 2
+               self.engineering_agent,        # Step 3
+               self.carbon_agent,             # Step 4
+           ]
+       )
+   ```
+
+4. **Test with E2E test**:
+   - Run existing test with ChatPanel.tsx + orecestrator_agent_bk.py
+   - Verify tools receive code correctly
+   - Verify analysis findings are non-empty
+
+**Phase 2: Enhanced Multi-File Support** (FUTURE)
+
+- Add Strategy B (per-file analysis)
+- Implement result aggregation
+- Handle language detection
+- Token optimization for large PRs
+
+### Test File Context
+
+The E2E test uses real files from `/Users/rahulgupta/Documents/Coding/agentic-codereview/tests/test_files/`:
+
+1. **ChatPanel.tsx** (378 lines, TypeScript)
+   - React component with WebSocket logic
+   - Has intentional issues for testing:
+     - Complex nested useEffect logic
+     - Reconnection loop potential
+     - State management complexity
+
+2. **orecestrator_agent_bk.py** (771 lines, Python)
+   - Old orchestrator backup file
+   - Complex async orchestration logic
+   - Sequential execution patterns
+
+**Test Expectations**:
+- GitHub Fetcher loads both files with full content
+- Data Adapter extracts and combines code
+- Security Agent finds issues (MD5, hardcoded values, etc.)
+- Quality Agent detects complexity issues
+- Engineering Agent evaluates patterns
+- Carbon Agent assesses efficiency
+- Report Synthesizer creates comprehensive markdown
 
 ---
 
@@ -576,18 +965,67 @@ session.state = {
 
 ## ✏️ Next Steps
 
-**Immediate**:
-1. ✅ Review and approve this simplified design
-2. ⏳ Verify ADK 1.17.0 artifact API capabilities
-3. ⏳ Create implementation task breakdown
-4. ⏳ Update agent_workspace/ structure
+### Phase 1 Implementation (December 8, 2025)
 
-**Future Considerations**:
-- Web UI pipeline (if needed later)
-- Agent parallelization (if speed becomes critical)
-- Selective agent execution (if resources constrained)
+**Status**: ✅ COMPLETE - Pipeline architecture validated
 
-But for now: **Keep it simple, make it work, iterate based on real usage.**
+**Completed**:
+1. ✅ Simplified orchestrator to sequential pipeline (3 steps)
+2. ✅ Created nested AnalysisPipeline (4 analysis agents)
+3. ✅ Updated all agents to sequential context
+4. ✅ Disabled planning/routing/dynamic selection
+5. ✅ Tested E2E - pipeline executes correctly
+
+**Issue Discovered**:
+❌ Data format mismatch between GitHub Fetcher and Analysis Tools
+- Fetcher provides: `{filename, content, language, ...}`
+- Tools expect: `{code, language, file_path}` in tool_context.state
+
+### Phase 1B: GitHub Data Adapter Implementation (NEXT)
+
+**Priority**: 🔥 CRITICAL - Blocks complete E2E testing
+
+**Tasks**:
+1. ⏳ Create `tools/github_data_adapter.py`
+   - Implement `prepare_files_for_analysis()` function
+   - Use Strategy A (concatenate all files)
+   - Transform github_pr_files → code/language/file_path
+
+2. ⏳ Create `agent_workspace/orchestrator_agent/sub_agents/github_data_adapter_agent/`
+   - Simple agent with single tool
+   - Instruction: Call prepare_files_for_analysis()
+   - No complex logic required
+
+3. ⏳ Update orchestrator's `_create_analysis_pipeline()`
+   - Add github_data_adapter as first agent
+   - Ensure it runs before security/quality/engineering/carbon
+
+4. ⏳ Test E2E with real files
+   - Verify tools receive code correctly
+   - Verify non-empty analysis findings
+   - Verify comprehensive report generation
+
+**Estimated Time**: 1-2 hours
+
+**Success Criteria**:
+- ✅ All analysis tools receive code successfully
+- ✅ Security agent finds vulnerabilities
+- ✅ Quality agent detects complexity issues
+- ✅ Engineering agent evaluates patterns
+- ✅ Carbon agent assesses efficiency
+- ✅ Report synthesizer creates full markdown with findings
+
+### Phase 2 Considerations (FUTURE)
+
+**Future Enhancements**:
+- Per-file analysis strategy (Strategy B)
+- Token optimization for large PRs
+- Result aggregation across files
+- Artifact cleanup policy
+- Web UI pipeline visualization
+- Agent parallelization (if speed critical)
+
+But for now: **Fix the data adapter, validate end-to-end, iterate based on real usage.**
 
 ---
 

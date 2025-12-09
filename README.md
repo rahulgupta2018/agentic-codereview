@@ -193,3 +193,6 @@ Commands:
   web          Starts a FastAPI server with Web UI for agents.
 
   adk api_server --help
+
+  Test the flow 
+  ./scripts/stop_adk_api_server.sh && sleep 2 && ./scripts/start_adk_api_server.sh
