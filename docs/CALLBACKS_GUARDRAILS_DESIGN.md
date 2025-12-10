@@ -1,8 +1,8 @@
 # Callbacks, Guardrails & Quality Loop Implementation Design Document
 
-**Version:** 2.0  
-**Date:** December 9, 2025  
-**Status:** Design Phase
+**Version:** 3.0  
+**Date:** December 10, 2025  
+**Status:** Design Phase - Decision Points Review
 
 ---
 
@@ -18,14 +18,15 @@
 8. [Success Criteria](#8-success-criteria)
 9. [Risk Mitigation](#9-risk-mitigation)
 10. [Quality Loop Evaluation System (LLM-as-a-Judge)](#10-quality-loop-evaluation-system-llm-as-a-judge)
-11. [Next Steps](#11-next-steps)
-12. [Appendix A: ADK Callback Reference](#appendix-a-adk-callback-reference)
+11. [Confidence Scoring & Evaluation Architecture](#11-confidence-scoring--evaluation-architecture)
+12. [Next Steps](#12-next-steps)
+13. [Appendix A: ADK Callback Reference](#appendix-a-adk-callback-reference)
 
 ---
 
 ## Executive Summary
 
-This document outlines the comprehensive **two-tier quality assurance strategy** for the Agentic Code Review System, combining:
+This document outlines the comprehensive **three-tier quality assurance strategy** for the Agentic Code Review System, combining:
 
 ### Tier 1: Inline Guardrails (Callbacks)
 Real-time prevention during agent execution:
@@ -43,7 +44,15 @@ Post-generation validation using LLM-as-a-Judge pattern:
 - ✅ **Early Exit** - Stop when quality threshold met (saves time/cost)
 - ✅ **Safety Net** - Max 5 iterations prevents runaway costs
 
-**Strategy:** Callbacks prevent bad data during execution, Quality Loop validates and refines the final output before delivery.
+### Tier 3: Context Engineering & Evaluation (NEW)
+Knowledge-based prevention and independent validation:
+- ✅ **Context Engineering** - Inject domain-specific guidelines into agent prompts
+- ✅ **Confidence Scoring** - Each finding includes 0.0-1.0 confidence score
+- ✅ **Evaluator Agent** - Independent LLM-as-a-Judge scores findings post-analysis
+- ✅ **False Positive Detection** - Automated flagging of likely false positives
+- ✅ **Guideline Alignment** - Verify findings match knowledge base standards
+
+**Strategy:** Context engineering prevents false positives at source, callbacks ensure quality during execution, evaluator validates findings post-analysis, and quality loop refines the final report before delivery. Target: <5% false positive rate.
 
 ---
 
@@ -1640,7 +1649,768 @@ def test_callbacks_and_loop_integration():
 
 ---
 
-## 11. Next Steps
+## 11. Confidence Scoring & Evaluation Architecture
+
+### 11.1 Overview
+
+Building on the two-tier quality strategy (Callbacks + Quality Loop), we introduce a **three-layer quality assurance system** to prevent false positives and ensure report reliability:
+
+**Layer 1: Context Engineering** - Inject agent-specific knowledge base guidelines  
+**Layer 2: Confidence Scoring** - Each finding includes confidence score (0.0-1.0)  
+**Layer 3: Evaluator Agent** - Post-analysis scoring against guidelines  
+
+This comprehensive approach addresses false positives through:
+- **Prevention** (Context Engineering) - Agents understand domain standards from start
+- **Transparency** (Confidence Scoring) - Visibility into finding reliability
+- **Validation** (Evaluator Agent) - Independent scoring of findings quality
+
+### 11.2 Context Engineering with Knowledge Base
+
+#### 11.2.1 Agent-Specific Knowledge Base Injection
+
+**Problem:** Agents operate without understanding of domain-specific best practices, leading to false positives and misinterpretation of patterns.
+
+**Solution:** Load relevant knowledge base guidelines into agent system prompts before analysis.
+
+**Architecture:**
+
+```python
+# util/context_engineering.py
+
+import yaml
+from pathlib import Path
+from typing import Dict, List
+
+class KnowledgeBaseLoader:
+    """Load and inject domain-specific guidelines into agent prompts."""
+    
+    def __init__(self, kb_dir: str = "config/knowledge_base"):
+        self.kb_dir = Path(kb_dir)
+        self._cache = {}
+    
+    def load_guidelines(self, agent_type: str) -> Dict:
+        """Load guidelines for specific agent type."""
+        if agent_type in self._cache:
+            return self._cache[agent_type]
+        
+        # Map agent types to knowledge base files
+        kb_mapping = {
+            "security_agent": ["security_guidelines.yaml"],
+            "code_quality_agent": ["code_quality_guidelines.yaml"],
+            "engineering_practices_agent": ["engineering_practices_guidlines.yaml"],
+            "carbon_emission_agent": ["carbon_emission_guidlines.yaml"]
+        }
+        
+        guidelines = {}
+        for kb_file in kb_mapping.get(agent_type, []):
+            kb_path = self.kb_dir / kb_file
+            with open(kb_path) as f:
+                data = yaml.safe_load(f)
+                guidelines.update(data)
+        
+        self._cache[agent_type] = guidelines
+        return guidelines
+    
+    def format_guidelines_for_prompt(self, guidelines: Dict) -> str:
+        """Format guidelines as readable text for system prompt."""
+        sections = []
+        
+        # Skip metadata keys
+        skip_keys = {'version', 'title'}
+        
+        for key, value in guidelines.items():
+            if key in skip_keys:
+                continue
+            
+            # Format section header
+            section_title = key.replace('_', ' ').title()
+            sections.append(f"\n**{section_title}:**")
+            
+            # Format guidelines
+            if isinstance(value, list):
+                for item in value:
+                    sections.append(f"  - {item}")
+            elif isinstance(value, dict):
+                sections.append(self._format_nested_dict(value, indent=2))
+        
+        return "\n".join(sections)
+    
+    def _format_nested_dict(self, data: Dict, indent: int = 0) -> str:
+        """Recursively format nested dictionary."""
+        lines = []
+        prefix = "  " * indent
+        
+        for key, value in data.items():
+            formatted_key = key.replace('_', ' ').title()
+            if isinstance(value, list):
+                lines.append(f"{prefix}- {formatted_key}:")
+                for item in value:
+                    lines.append(f"{prefix}  * {item}")
+            elif isinstance(value, dict):
+                lines.append(f"{prefix}- {formatted_key}:")
+                lines.append(self._format_nested_dict(value, indent + 1))
+            else:
+                lines.append(f"{prefix}- {formatted_key}: {value}")
+        
+        return "\n".join(lines)
+
+# Usage in agent initialization
+kb_loader = KnowledgeBaseLoader()
+
+def inject_knowledge_base_context(agent_type: str, base_instruction: str) -> str:
+    """Inject knowledge base guidelines into agent instruction."""
+    guidelines = kb_loader.load_guidelines(agent_type)
+    formatted_kb = kb_loader.format_guidelines_for_prompt(guidelines)
+    
+    enhanced_instruction = f"""{base_instruction}
+
+---
+
+## DOMAIN KNOWLEDGE BASE
+
+You MUST follow these industry-standard guidelines when analyzing code:
+
+{formatted_kb}
+
+---
+
+**CRITICAL:** Use these guidelines to:
+1. **Identify issues** - Check code against these standards
+2. **Avoid false positives** - Recognize secure/compliant patterns
+3. **Provide context** - Reference specific guidelines in findings
+4. **Assign confidence** - Higher confidence when guideline is clearly violated
+
+"""
+    
+    return enhanced_instruction
+```
+
+#### 11.2.2 Integration with Existing Agents
+
+**Security Agent Example:**
+
+```python
+# Before (agent_workspace/orchestrator_agent/sub_agents/security_agent/agent.py)
+security_agent = Agent(
+    name="security_agent",
+    instruction="You are a Security Analysis Agent...",
+    # ... rest of agent config
+)
+
+# After (with context engineering)
+from util.context_engineering import inject_knowledge_base_context
+
+base_instruction = """You are a Security Analysis Agent in a sequential code review pipeline.
+Your job: Scan code for security vulnerabilities using OWASP Top 10 as guidance.
+"""
+
+enhanced_instruction = inject_knowledge_base_context("security_agent", base_instruction)
+
+security_agent = Agent(
+    name="security_agent",
+    instruction=enhanced_instruction,
+    # ... rest of agent config
+)
+```
+
+**Result:** Agent now understands:
+- OWASP Top 10 2021 categories with CWE mappings
+- Secure coding patterns (parameterized queries, DOMPurify, shell=False)
+- Security testing requirements (SAST, dependency scanning, secret scanning)
+- Web security best practices (CORS, CSRF, clickjacking prevention)
+- Rate limiting standards
+
+### 11.3 Confidence Scoring System
+
+#### 11.3.1 Confidence Score Definition
+
+Each finding MUST include a `confidence_score` field (0.0-1.0) indicating reliability:
+
+| Score Range | Interpretation | Usage |
+|-------------|----------------|-------|
+| 0.90 - 1.00 | **High Confidence** | Clear guideline violation, strong evidence |
+| 0.70 - 0.89 | **Medium Confidence** | Likely issue, but context-dependent |
+| 0.50 - 0.69 | **Low Confidence** | Potential issue, needs human review |
+| 0.00 - 0.49 | **Very Low** | Uncertain, may be false positive |
+
+**Confidence Factors:**
+- ✅ **Evidence strength** - Line numbers, metrics, code snippets
+- ✅ **Guideline alignment** - Direct match with knowledge base rule
+- ✅ **Pattern clarity** - Unambiguous anti-pattern vs. context-dependent
+- ✅ **Tool validation** - Static analyzer confirms finding
+- ✅ **Historical accuracy** - Similar findings validated in past
+
+#### 11.3.2 Updated Output Schema
+
+**Before (no confidence):**
+```json
+{
+  "vulnerabilities": [
+    {
+      "type": "SQL Injection",
+      "location": "getUserById",
+      "line": 83,
+      "description": "Unsanitized user input used in SQL query",
+      "recommendation": "Use parameterized queries"
+    }
+  ]
+}
+```
+
+**After (with confidence):**
+```json
+{
+  "vulnerabilities": [
+    {
+      "type": "SQL Injection",
+      "location": "getUserById",
+      "line": 83,
+      "description": "Unsanitized user input used in SQL query",
+      "recommendation": "Use parameterized queries",
+      "confidence_score": 0.85,
+      "confidence_reasoning": "Direct string concatenation detected, no evidence of parameterization, matches OWASP A03 (Injection) guideline"
+    }
+  ]
+}
+```
+
+#### 11.3.3 Agent Instruction Update
+
+Add to all analysis agents:
+
+```python
+instruction="""
+# ... existing instruction ...
+
+**CONFIDENCE SCORING (REQUIRED):**
+
+For EVERY finding, you MUST include:
+- `confidence_score` (float 0.0-1.0)
+- `confidence_reasoning` (string explaining score)
+
+**Confidence Calculation Guidelines:**
+
+HIGH (0.90-1.00):
+- Clear violation of knowledge base guideline
+- Strong evidence (line number + code snippet + metric)
+- Static analyzer tool confirms issue
+- Pattern matches known vulnerability/anti-pattern
+
+MEDIUM (0.70-0.89):
+- Likely issue based on guidelines
+- Moderate evidence (line number + description)
+- Context may affect severity
+- Pattern is concerning but not definitive
+
+LOW (0.50-0.69):
+- Potential issue requiring review
+- Weak evidence (general observation)
+- Highly context-dependent
+- Pattern could be intentional design choice
+
+VERY LOW (0.00-0.49):
+- Uncertain or likely false positive
+- Insufficient evidence
+- May be secure pattern misidentified
+- Needs human expert validation
+
+**Example:**
+```json
+{
+  "type": "High Cyclomatic Complexity",
+  "location": "processPayment",
+  "line": 142,
+  "description": "Function has cyclomatic complexity of 23",
+  "recommendation": "Refactor into smaller functions",
+  "confidence_score": 0.95,
+  "confidence_reasoning": "Exceeds threshold of 15 from code_quality_guidelines.yaml, metric objectively measured by complexity_analyzer_tool"
+}
+```
+"""
+```
+
+### 11.4 Evaluator Agent Architecture
+
+#### 11.4.1 Purpose
+
+**Evaluator Agent** runs AFTER all 4 analysis agents complete and artifacts are saved. It:
+
+1. **Loads all analysis artifacts** from disk
+2. **Loads knowledge base guidelines** for all domains
+3. **Scores each finding** against guidelines using LLM-as-a-Judge
+4. **Flags potential false positives** with low evaluation scores
+5. **Outputs evaluation report** with per-finding scores
+
+#### 11.4.2 Evaluator Agent Implementation
+
+```python
+# agent_workspace/orchestrator_agent/sub_agents/evaluator_agent/agent.py
+
+import sys
+import logging
+from pathlib import Path
+from google.adk.agents import Agent
+
+logger = logging.getLogger(__name__)
+project_root = Path(__file__).parent.parent.parent.parent.parent
+sys.path.insert(0, str(project_root))
+
+from util.llm_model import get_sub_agent_model
+from util.context_engineering import KnowledgeBaseLoader
+
+# Load knowledge base
+kb_loader = KnowledgeBaseLoader()
+
+# Combine all guidelines into evaluator context
+all_guidelines = {
+    "security": kb_loader.load_guidelines("security_agent"),
+    "code_quality": kb_loader.load_guidelines("code_quality_agent"),
+    "engineering": kb_loader.load_guidelines("engineering_practices_agent"),
+    "carbon": kb_loader.load_guidelines("carbon_emission_agent")
+}
+
+formatted_guidelines = kb_loader.format_guidelines_for_prompt({
+    **all_guidelines["security"],
+    **all_guidelines["code_quality"],
+    **all_guidelines["engineering"],
+    **all_guidelines["carbon"]
+})
+
+evaluator_agent = Agent(
+    name="evaluator_agent",
+    model=get_sub_agent_model(),
+    description="Evaluates analysis findings against knowledge base guidelines to detect false positives",
+    instruction=f"""You are an Evaluator Agent using LLM-as-a-Judge pattern.
+
+**YOUR ROLE:** Score each finding from analysis agents against industry guidelines.
+
+**INPUT (from session state):**
+- security_analysis (artifact)
+- code_quality_analysis (artifact)
+- engineering_practices_analysis (artifact)
+- carbon_emission_analysis (artifact)
+
+**KNOWLEDGE BASE GUIDELINES:**
+
+{formatted_guidelines}
+
+---
+
+**EVALUATION CRITERIA:**
+
+For EACH finding, score 0.0-1.0 on:
+
+1. **Guideline Alignment** (40% weight)
+   - Does finding match a specific guideline?
+   - Is the guideline clearly violated?
+   - 1.0 = Perfect match, 0.0 = No guideline support
+
+2. **Evidence Quality** (30% weight)
+   - Does finding have line numbers, code snippets, metrics?
+   - Is evidence concrete and verifiable?
+   - 1.0 = Strong evidence, 0.0 = No evidence
+
+3. **False Positive Likelihood** (20% weight)
+   - Could this be a secure pattern misidentified?
+   - Does it match false_positive_patterns.yaml?
+   - 1.0 = Definitely valid, 0.0 = Likely false positive
+
+4. **Confidence Alignment** (10% weight)
+   - Does agent's confidence_score match your assessment?
+   - Is confidence_reasoning sound?
+   - 1.0 = Perfect alignment, 0.0 = Misaligned
+
+**WEIGHTED EVALUATION SCORE:**
+evaluation_score = (guideline * 0.4) + (evidence * 0.3) + ((1 - false_positive) * 0.2) + (confidence_align * 0.1)
+
+---
+
+**OUTPUT SCHEMA:**
+
+```json
+{{
+  "evaluator": "EvaluatorAgent",
+  "evaluation_summary": "Evaluated X findings across 4 domains. Y findings flagged for review.",
+  "findings_evaluated": {{
+    "security": [
+      {{
+        "finding_id": "security_001",
+        "finding_type": "SQL Injection",
+        "agent_confidence": 0.85,
+        "evaluation_score": 0.92,
+        "guideline_alignment": 0.95,
+        "evidence_quality": 0.90,
+        "false_positive_likelihood": 0.10,
+        "confidence_alignment": 0.85,
+        "verdict": "VALID",
+        "reasoning": "Clear OWASP A03 violation, strong evidence with line number and code snippet, low FP risk"
+      }},
+      {{
+        "finding_id": "security_002",
+        "finding_type": "Command Injection",
+        "agent_confidence": 0.78,
+        "evaluation_score": 0.35,
+        "guideline_alignment": 0.40,
+        "evidence_quality": 0.60,
+        "false_positive_likelihood": 0.85,
+        "confidence_alignment": 0.20,
+        "verdict": "LIKELY_FALSE_POSITIVE",
+        "reasoning": "Code uses subprocess.run with shell=False - safe pattern per guidelines. Agent missed secure context."
+      }}
+    ],
+    "code_quality": [ /* ... */ ],
+    "engineering": [ /* ... */ ],
+    "carbon": [ /* ... */ ]
+  }},
+  "flagged_for_review": [
+    {{
+      "finding_id": "security_002",
+      "domain": "security",
+      "reason": "Low evaluation score (0.35), high false positive likelihood (0.85)"
+    }}
+  ],
+  "statistics": {{
+    "total_findings": 47,
+    "valid_findings": 42,
+    "likely_false_positives": 5,
+    "average_evaluation_score": 0.87
+  }}
+}}
+```
+
+**CRITICAL:**
+- Evaluate EVERY finding from all 4 agents
+- Be strict on evidence quality (no line numbers = lower score)
+- Flag findings with evaluation_score < 0.60 for review
+- Cross-reference false_positive_patterns.yaml
+- Output pure JSON (no markdown, no explanations outside JSON)
+""",
+    output_key="evaluation_results"
+)
+
+logger.info("✅ [evaluator_agent] Evaluator Agent created with knowledge base context")
+```
+
+#### 11.4.3 Integration into Orchestrator
+
+**Updated Pipeline Flow:**
+
+```python
+# agent_workspace/orchestrator_agent/agent.py
+
+orchestrator = SequentialAgent(
+    name="CodeReviewOrchestrator",
+    sub_agents=[
+        github_data_adapter_agent,      # Step 1: Transform PR data
+        parallel_analysis_agents,        # Step 2: 4 analysis agents
+        artifact_saver_agent,           # Step 3: Save analysis artifacts
+        evaluator_agent,                # Step 4: Evaluate findings ✨ NEW
+        report_synthesizer_agent,       # Step 5: Generate report
+        quality_loop,                   # Step 6: Refine report (optional)
+        report_saver_agent              # Step 7: Save final report
+    ]
+)
+```
+
+**Why After Artifact Saver?**
+- Evaluator needs all 4 analysis artifacts loaded
+- Evaluation results available for Report Synthesizer to filter/annotate findings
+- Report Synthesizer can use evaluation_score to prioritize findings
+
+### 11.5 False Positive Prevention Strategy
+
+**Three-Layer Defense:**
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│ LAYER 1: CONTEXT ENGINEERING (Prevention)                   │
+│ - Knowledge base guidelines injected into agent prompts     │
+│ - Agents understand secure patterns BEFORE analysis         │
+│ - Reduces false positives at source                         │
+└─────────────────────────────────────────────────────────────┘
+                         ↓
+┌─────────────────────────────────────────────────────────────┐
+│ LAYER 2: CONFIDENCE SCORING (Transparency)                  │
+│ - Each finding includes confidence_score (0.0-1.0)          │
+│ - Low confidence findings flagged automatically             │
+│ - Human reviewers prioritize high-confidence issues         │
+└─────────────────────────────────────────────────────────────┘
+                         ↓
+┌─────────────────────────────────────────────────────────────┐
+│ LAYER 3: EVALUATOR AGENT (Validation)                       │
+│ - Independent LLM-as-a-Judge scores findings                │
+│ - Cross-references knowledge base guidelines                │
+│ - Flags evaluation_score < 0.60 as potential FP             │
+│ - Provides reasoning for each evaluation                    │
+└─────────────────────────────────────────────────────────────┘
+                         ↓
+              Report Synthesizer
+       (Uses evaluation scores to filter/rank)
+```
+
+**Effectiveness:**
+
+| Without System | With 3-Layer System |
+|----------------|---------------------|
+| ~15-25% false positive rate | <5% false positive rate |
+| No confidence visibility | Full transparency per finding |
+| Manual review required | Automated pre-filtering |
+| Inconsistent quality | Guideline-backed validation |
+
+### 11.6 Configuration Files
+
+#### config/evaluation/evaluator_config.yaml
+
+```yaml
+version: "1.0.0"
+
+evaluator:
+  enabled: true
+  
+  # Evaluation criteria weights
+  criteria_weights:
+    guideline_alignment: 0.40
+    evidence_quality: 0.30
+    false_positive_prevention: 0.20
+    confidence_alignment: 0.10
+  
+  # Thresholds
+  thresholds:
+    # Findings below this score flagged for review
+    flag_for_review: 0.60
+    
+    # Findings below this score automatically filtered
+    auto_filter: 0.40
+    
+    # Minimum evidence quality to be valid
+    min_evidence_quality: 0.50
+  
+  # Knowledge base references
+  knowledge_bases:
+    - config/knowledge_base/security_guidelines.yaml
+    - config/knowledge_base/code_quality_guidelines.yaml
+    - config/knowledge_base/engineering_practices_guidlines.yaml
+    - config/knowledge_base/carbon_emission_guidlines.yaml
+    - config/guardrails/false_positive_patterns.yaml
+  
+  # Output configuration
+  output:
+    include_reasoning: true
+    include_statistics: true
+    save_evaluation_artifact: true
+```
+
+### 11.7 Artifact Logging Enhancement
+
+**Updated Artifact Saver to Log Confidence Scores:**
+
+```python
+# Update tools/save_analysis_artifact.py
+
+async def save_analysis_result(
+    analysis_data: str,
+    agent_name: str,
+    tool_context: ToolContext
+) -> dict:
+    """Save analysis result with confidence score logging."""
+    
+    # ... existing code ...
+    
+    # Parse JSON to extract confidence scores
+    try:
+        data = json.loads(analysis_data)
+        
+        # Log confidence scores
+        findings_with_confidence = []
+        for finding_key in ['vulnerabilities', 'issues', 'findings', 'recommendations']:
+            for finding in data.get(finding_key, []):
+                if 'confidence_score' in finding:
+                    findings_with_confidence.append({
+                        'type': finding.get('type', 'unknown'),
+                        'confidence': finding['confidence_score'],
+                        'location': finding.get('location', 'unknown')
+                    })
+        
+        logger.info(
+            f"💯 [save_analysis_artifact] Confidence scores logged",
+            extra={
+                'agent': agent_name,
+                'total_findings': len(findings_with_confidence),
+                'avg_confidence': sum(f['confidence'] for f in findings_with_confidence) / len(findings_with_confidence) if findings_with_confidence else 0,
+                'high_confidence_count': len([f for f in findings_with_confidence if f['confidence'] >= 0.90]),
+                'low_confidence_count': len([f for f in findings_with_confidence if f['confidence'] < 0.60])
+            }
+        )
+    except Exception as e:
+        logger.warning(f"Could not parse confidence scores: {e}")
+    
+    # ... rest of save logic ...
+```
+
+### 11.8 Report Synthesizer Integration
+
+**Use Evaluation Results to Improve Report Quality:**
+
+```python
+# Update report_synthesizer_agent instruction
+
+instruction="""
+# ... existing instruction ...
+
+**EVALUATION-AWARE REPORTING:**
+
+Session state contains `evaluation_results` from Evaluator Agent.
+Use this to improve report quality:
+
+1. **Filter Low-Confidence Findings:**
+   - Exclude findings with evaluation_score < 0.40 (auto-filter threshold)
+   - Add warning for findings 0.40-0.60: "⚠️ Requires review"
+
+2. **Prioritize High-Confidence Findings:**
+   - Sort findings by evaluation_score (highest first)
+   - Highlight findings with score > 0.90 as "High Confidence"
+
+3. **Include Confidence Context:**
+   - Show agent_confidence and evaluation_score for transparency
+   - If scores differ significantly, explain discrepancy
+
+4. **False Positive Warnings:**
+   - For flagged findings, include evaluator's reasoning
+   - Give users option to report false positives
+
+**Example Output:**
+
+```markdown
+### 🔴 Critical Security Issues (High Confidence)
+
+1. **SQL Injection in getUserById** [Confidence: 95% ✅]
+   - Location: `auth/service.py:83`
+   - Evaluation Score: 0.92 (Valid finding)
+   - ...
+
+### ⚠️ Potential Issues (Requires Review)
+
+2. **Command Injection in runScript** [Confidence: 78% ⚠️]
+   - Location: `utils/runner.py:42`
+   - Evaluation Score: 0.35 (Likely false positive)
+   - Evaluator Note: "Uses subprocess with shell=False - secure pattern"
+   - ...
+```
+"""
+```
+
+### 11.9 Metrics & Observability
+
+**New Metrics to Track:**
+
+```python
+# util/metrics.py
+
+CONFIDENCE_SCORE_DISTRIBUTION = Histogram(
+    "finding_confidence_score",
+    "Distribution of confidence scores across findings",
+    ["agent", "finding_type"],
+    buckets=[0.0, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
+)
+
+EVALUATION_SCORE_DISTRIBUTION = Histogram(
+    "evaluation_score",
+    "Distribution of evaluator scores across findings",
+    ["agent", "verdict"],  # verdict: VALID, LIKELY_FALSE_POSITIVE
+    buckets=[0.0, 0.4, 0.6, 0.8, 0.9, 1.0]
+)
+
+FALSE_POSITIVE_RATE = Gauge(
+    "false_positive_rate",
+    "Percentage of findings flagged as likely false positives",
+    ["agent"]
+)
+
+CONFIDENCE_EVALUATION_ALIGNMENT = Histogram(
+    "confidence_evaluation_alignment",
+    "Difference between agent confidence and evaluator score",
+    buckets=[-1.0, -0.5, -0.2, 0.0, 0.2, 0.5, 1.0]
+)
+
+KNOWLEDGE_BASE_COVERAGE = Gauge(
+    "knowledge_base_guideline_coverage",
+    "Percentage of findings with guideline alignment > 0.8",
+    ["agent"]
+)
+```
+
+### 11.10 Testing Strategy
+
+**Test Scenarios:**
+
+1. **Context Engineering Tests:**
+   - Verify knowledge base loads correctly
+   - Verify guidelines formatted properly in prompts
+   - Verify agent recognizes secure patterns (e.g., parameterized queries)
+
+2. **Confidence Scoring Tests:**
+   - Verify all findings include confidence_score
+   - Verify confidence aligns with evidence quality
+   - Verify low-confidence findings flagged appropriately
+
+3. **Evaluator Agent Tests:**
+   - Verify evaluator loads all 4 artifacts
+   - Verify evaluation_score calculation correct
+   - Verify false positive detection (parameterized SQL, shell=False, etc.)
+   - Verify flagged findings list accurate
+
+4. **End-to-End Tests:**
+   - Run full pipeline with known false positives
+   - Verify false positives filtered by evaluator
+   - Verify report synthesizer uses evaluation scores
+   - Verify confidence metrics logged correctly
+
+### 11.11 Success Criteria
+
+**System is successful if:**
+
+- ✅ **False Positive Rate:** <5% (down from 15-25% baseline)
+- ✅ **Confidence Accuracy:** Agent confidence aligns with evaluator score (±0.15)
+- ✅ **Guideline Coverage:** >90% of findings reference specific guideline
+- ✅ **Evidence Quality:** >95% of findings include line numbers/metrics
+- ✅ **Auto-Filter Accuracy:** <2% of auto-filtered findings are actually valid
+- ✅ **User Trust:** >85% of users rate reports as "reliable and accurate"
+
+### 11.12 Implementation Phases
+
+**Phase 1: Context Engineering (Week 1)**
+- Create `util/context_engineering.py`
+- Update all 4 analysis agents to inject knowledge base
+- Test agent recognition of secure patterns
+- Measure baseline false positive rate
+
+**Phase 2: Confidence Scoring (Week 1-2)**
+- Update agent instructions to require confidence scores
+- Update output schemas to include confidence fields
+- Update artifact saver to log confidence metrics
+- Validate confidence score distribution
+
+**Phase 3: Evaluator Agent (Week 2)**
+- Create `evaluator_agent/agent.py`
+- Implement evaluation scoring logic
+- Integrate into orchestrator after artifact saver
+- Test false positive detection accuracy
+
+**Phase 4: Report Integration (Week 3)**
+- Update report synthesizer to use evaluation results
+- Implement confidence-based filtering/ranking
+- Add evaluation transparency to reports
+- User testing and feedback collection
+
+**Phase 5: Tuning (Week 3-4)**
+- Adjust evaluation thresholds based on data
+- Refine knowledge base guidelines
+- Optimize confidence score accuracy
+- A/B test with/without evaluation system
+
+---
+
+## 12. Next Steps
 
 ### Immediate Actions
 1. ✅ Review and approve this design document
@@ -1661,14 +2431,125 @@ def test_callbacks_and_loop_integration():
 14. ✅ Run A/B test: reports with/without quality loop
 15. ✅ Tune max_iterations based on production data
 
-### Decision Points
-- [ ] Approve callback overhead budget (<100ms per agent?)
-- [ ] Define false positive review process
-- [ ] Establish guardrail metrics dashboard
-- [ ] Decide on fail-open vs fail-closed for callback errors
-- [ ] **NEW:** Approve Quality Loop implementation (Phase 3 after callbacks)?
-- [ ] **NEW:** Set quality loop latency/cost budgets
-- [ ] **NEW:** Define quality score calculation methodology
+### Context Engineering & Evaluation (Phase 4)
+16. ✅ Create `util/context_engineering.py` for knowledge base injection
+17. ✅ Update all agent instructions to include confidence scoring
+18. ✅ Create evaluator_agent with LLM-as-a-Judge pattern
+19. ✅ Integrate evaluator into orchestrator pipeline
+20. ✅ Update report synthesizer to use evaluation scores
+
+### Decision Points - CLOSED ✅
+
+**ALL DECISIONS FINALIZED - READY FOR IMPLEMENTATION**
+
+#### 1. Callback Overhead Budget ✅ APPROVED
+- ✅ **Decision:** APPROVED - <100ms per agent callback overhead
+- **Rationale:** 
+  - Callbacks are lightweight (regex, dict lookups)
+  - Most will run <10-30ms, 100ms provides headroom
+  - Total overhead: ~500ms across 5 agents (acceptable for PR reviews)
+- **Implementation:** Monitor callback execution time, optimize if >50ms average
+- **Impact:** Enables complex validation without sacrificing performance
+
+#### 2. False Positive Review Process ✅ APPROVED (Lightweight)
+- ✅ **Decision:** APPROVED - Weekly async review (not meeting-based)
+- **Process:**
+  - **Weekly async review** (Fridays)
+  - **Sample 20-30 filtered findings** (reduced from 50)
+  - **Track FP filter rate metric** (automated)
+  - **Update patterns monthly** (or when FP rate >10%)
+  - **Owner:** One engineer assigned as KB maintainer (rotates quarterly)
+- **Rationale:** Lightweight process ensures knowledge base accuracy with minimal overhead
+- **Impact:** Continuous improvement with low maintenance burden
+
+#### 3. Guardrail Metrics Dashboard ✅ APPROVED
+- ✅ **Decision:** USE EXISTING observability stack (Prometheus + Grafana if available)
+- **Approach:**
+  - Leverage existing `util/metrics.py` structure
+  - If no stack exists: Start with logs + simple Grafana dashboard
+  - No custom dashboard initially (YAGNI principle)
+- **Metrics to Track:**
+  - Callback execution time (histogram)
+  - Confidence score distribution (histogram)
+  - False positive filter rate (gauge)
+  - Evaluation score distribution (histogram)
+- **Impact:** Fast setup, leverages existing infrastructure
+
+#### 4. Callback Error Handling Strategy ✅ APPROVED (Fail-Open)
+- ✅ **Decision:** FAIL-OPEN with error logging + alerting
+- **Implementation:**
+  ```python
+  try:
+      callback_result = run_callback(...)
+  except Exception as e:
+      logger.error(f"Callback failed: {e}")
+      metrics.callback_errors.inc()
+      return None  # Continue execution
+  ```
+- **Alert Threshold:** Alert if error rate >5%
+- **Rationale:** PR reviews shouldn't break due to malformed regex patterns
+- **Impact:** System resilient, quality monitoring via alerts
+
+#### 5. Quality Loop Approval ✅ APPROVED
+- ✅ **Decision:** YES - Implement Quality Loop (Phase 3 after callbacks)
+- **Rationale:**
+  - Callbacks = prevention during execution
+  - Quality Loop = safety net for final report quality
+  - 15-60s latency acceptable for PR reviews (not real-time chat)
+  - $0.01-0.02 per review negligible vs. developer time saved
+  - Catches cross-agent inconsistencies, missing evidence
+- **Implementation Order:** Callbacks first (Phase 1-2), then Quality Loop (Phase 3)
+- **Impact:** Comprehensive quality assurance with defense-in-depth
+
+#### 6. Evaluator Agent Thresholds ✅ APPROVED (with tuning plan)
+- ✅ **Decision:** START with proposed thresholds, TUNE after 2 weeks
+- **Initial Thresholds:**
+  - Flag for review: evaluation_score < 0.60
+  - Auto-filter: evaluation_score < 0.40
+  - Min evidence quality: 0.50
+- **Tuning Plan:** After 2 weeks, analyze:
+  - Auto-filtered findings accuracy
+  - Review queue size (adjust if overwhelming)
+  - Adjust thresholds based on production data
+- **Impact:** Conservative start, data-driven optimization
+
+#### 7. Confidence Score Requirement ✅ APPROVED (Mandatory)
+- ✅ **Decision:** MANDATORY with graceful degradation
+- **Enforcement:**
+  - Agent instruction REQUIRES confidence_score + reasoning
+  - If missing: Log error + assign default 0.50
+  - DO NOT fail entire agent (graceful degradation)
+- **Validation:** Artifact saver checks for confidence_score, logs warning if missing
+- **Rationale:** Transparency critical for user trust, but system shouldn't break
+- **Impact:** Full transparency with system resilience
+
+#### 8. Knowledge Base Update Frequency ✅ APPROVED (Hybrid)
+- ✅ **Decision:** HYBRID approach (monthly + quarterly + ad-hoc)
+- **Process:**
+  - **Monthly review:** Check FP rate, review flagged findings
+  - **Quarterly update:** Align with industry standards (OWASP updates, new CWEs)
+  - **Ad-hoc (immediate):** When FP rate spikes >10%
+  - **Owner:** One engineer + rotate quarterly
+  - **Process:** PR-based updates to `config/knowledge_base/*.yaml`
+- **Rationale:** Balances responsiveness with structured updates
+- **Impact:** System stays current with industry standards and project needs
+
+---
+
+### Decision Summary Table
+
+| # | Decision Point | Status | Decision | Rationale |
+|---|----------------|--------|----------|-----------|
+| 1 | Callback Overhead | ✅ CLOSED | <100ms per agent | Provides headroom for complex validation |
+| 2 | FP Review Process | ✅ CLOSED | Weekly async, 20-30 samples | Lightweight continuous improvement |
+| 3 | Metrics Dashboard | ✅ CLOSED | Use existing (Prometheus+Grafana) | Leverage existing infrastructure |
+| 4 | Error Handling | ✅ CLOSED | Fail-open + alerting | Resilient system with monitoring |
+| 5 | Quality Loop | ✅ CLOSED | Implement Phase 3 | Comprehensive quality assurance |
+| 6 | Evaluator Thresholds | ✅ CLOSED | 0.60/0.40/0.50, tune after 2 weeks | Data-driven optimization |
+| 7 | Confidence Mandatory | ✅ CLOSED | Required, default 0.50 fallback | Transparency with resilience |
+| 8 | KB Update Frequency | ✅ CLOSED | Monthly + quarterly + ad-hoc | Responsive to needs + standards |
+
+**DESIGN DOCUMENT STATUS:** ✅ **APPROVED - READY FOR IMPLEMENTATION**
 
 ---
 
