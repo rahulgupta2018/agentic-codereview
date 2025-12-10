@@ -63,6 +63,16 @@ async def save_analysis_result(
             analysis_data = '\n'.join(lines).strip()
             logger.info(f"  🔧 Stripped markdown code fences from analysis data")
         
+        # Sanitize markdown backticks inside JSON strings (model mixing markdown with JSON)
+        # Replace backticks with single quotes to maintain valid JSON
+        import re
+        original_data = analysis_data
+        # Replace backticks that appear inside JSON string values
+        # Pattern: finds backticks within quoted strings (not at start/end of file)
+        analysis_data = re.sub(r'`([^`]+)`', r"'\1'", analysis_data)
+        if analysis_data != original_data:
+            logger.info(f"  🔧 Sanitized markdown backticks inside JSON strings")
+        
         # Get session ID from tool context
         session = tool_context.session
         session_id = session.id if session else "unknown"
@@ -105,9 +115,75 @@ async def save_analysis_result(
         try:
             parsed_json = json.loads(analysis_data)
             artifact_path.write_text(json.dumps(parsed_json, indent=2), encoding='utf-8')
+            
+            # Parse and log confidence scores
+            findings_with_confidence = []
+            confidence_scores = []
+            
+            # Helper function to recursively extract confidence scores from nested structures
+            def extract_confidence_scores_recursive(data, path=""):
+                """Recursively search for confidence_score keys in nested dictionaries and lists."""
+                if isinstance(data, dict):
+                    # Check if this dict has a confidence_score
+                    if 'confidence_score' in data:
+                        score = data.get('confidence_score', 0.0)
+                        confidence_scores.append(score)
+                        findings_with_confidence.append({
+                            'type': data.get('type') or data.get('issue') or data.get('principle') or data.get('recommendation', '')[:50] or path or 'finding',
+                            'confidence': score,
+                            'reasoning': data.get('confidence_reasoning', 'N/A')
+                        })
+                    
+                    # Recursively search nested dictionaries
+                    for key, value in data.items():
+                        new_path = f"{path}.{key}" if path else key
+                        extract_confidence_scores_recursive(value, new_path)
+                        
+                elif isinstance(data, list):
+                    # Recursively search list items
+                    for i, item in enumerate(data):
+                        new_path = f"{path}[{i}]" if path else f"[{i}]"
+                        extract_confidence_scores_recursive(item, new_path)
+            
+            # Extract confidence scores from entire JSON structure
+            extract_confidence_scores_recursive(parsed_json)
+            
+            # Log confidence score statistics
+            if confidence_scores:
+                avg_confidence = sum(confidence_scores) / len(confidence_scores)
+                high_confidence_count = len([s for s in confidence_scores if s >= 0.90])
+                medium_confidence_count = len([s for s in confidence_scores if 0.70 <= s < 0.90])
+                low_confidence_count = len([s for s in confidence_scores if s < 0.70])
+                
+                logger.info(
+                    f"💯 [save_analysis_artifact] Confidence scores logged for {agent_name}",
+                    extra={
+                        'agent': agent_name,
+                        'total_findings': len(findings_with_confidence),
+                        'avg_confidence': round(avg_confidence, 3),
+                        'high_confidence_count': high_confidence_count,
+                        'medium_confidence_count': medium_confidence_count,
+                        'low_confidence_count': low_confidence_count
+                    }
+                )
+                
+                # Log low confidence findings for review
+                low_confidence_findings = [f for f in findings_with_confidence if f['confidence'] < 0.60]
+                if low_confidence_findings:
+                    logger.warning(
+                        f"⚠️ [save_analysis_artifact] {len(low_confidence_findings)} low-confidence findings (<0.60) for {agent_name}",
+                        extra={
+                            'agent': agent_name,
+                            'low_confidence_findings': low_confidence_findings
+                        }
+                    )
+            else:
+                logger.warning(f"⚠️ [save_analysis_artifact] No confidence scores found in {agent_name} output")
+                
         except json.JSONDecodeError:
             # If not valid JSON, save as-is
             artifact_path.write_text(analysis_data, encoding='utf-8')
+            logger.warning(f"⚠️ [save_analysis_artifact] Invalid JSON from {agent_name}, saved as-is")
         
         logger.info(f"  ✅ Saved to disk: {artifact_path.relative_to(project_root)}")
         logger.info(f"✅ [save_analysis_result] {agent_name} analysis saved successfully to 3 locations")
