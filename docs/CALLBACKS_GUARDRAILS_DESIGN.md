@@ -1,8 +1,8 @@
 # Callbacks, Guardrails & Quality Loop Implementation Design Document
 
-**Version:** 3.0  
-**Date:** December 10, 2025  
-**Status:** Design Phase - Decision Points Review
+**Version:** 3.1  
+**Date:** December 11, 2025  
+**Status:** Phase 1 Complete - Markdown+YAML Output Format
 
 ---
 
@@ -92,7 +92,7 @@ Knowledge-based prevention and independent validation:
                                     ↓
 ┌──────────────────────────────────────────────────────────────────────────┐
 │                    ARTIFACT SAVER AGENT                                   │
-│              Saves 4 analysis JSONs to storage                            │
+│         Saves 4 analysis artifacts (Markdown+YAML) to storage             │
 └──────────────────────────────────────────────────────────────────────────┘
                                     ↓
 ┌──────────────────────────────────────────────────────────────────────────┐
@@ -282,8 +282,11 @@ def security_agent_after_agent(callback_context, content):
     - Check for hallucinated CVEs
     - Remove profanity/bias from descriptions
     """
-    # Parse security analysis JSON
-    analysis = json.loads(content.parts[0].text)
+    # Parse security analysis (Markdown+YAML)
+    text = content.parts[0].text
+    parts = text.split('---', 2)
+    metadata = yaml.safe_load(parts[1]) if len(parts) >= 3 else {}
+    markdown_body = parts[2] if len(parts) >= 3 else text
     
     # Validate each vulnerability
     for vuln in analysis.get('vulnerabilities', []):
@@ -737,7 +740,7 @@ def validate_cve_exists(cve_id: str) -> bool:
     return True
 
 def validate_json_structure(json_text: str, required_schema: Dict) -> bool:
-    """Validate JSON output matches expected schema."""
+    """Validate Markdown+YAML output has required metadata and sections."""
     try:
         data = json.loads(json_text)
         
