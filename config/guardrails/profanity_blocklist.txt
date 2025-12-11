@@ -1,0 +1,25 @@
+# Profanity and inappropriate language blocklist
+# Lines starting with # are comments
+# Add one term per line (case-insensitive)
+
+# Common profanity (sanitized list - add actual terms as needed)
+damn
+hell
+crap
+
+# Inappropriate technical terms
+wtf
+omg
+lol
+
+# Discriminatory language (examples - expand as needed)
+retarded
+lame
+
+# Unprofessional language
+sucks
+blows
+trash
+garbage
+
+# Add more terms as needed based on your organization's standards

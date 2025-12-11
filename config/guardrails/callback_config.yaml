@@ -1,0 +1,83 @@
+version: "1.0.0"
+description: "Callback configuration for guardrails system"
+
+# Global callback settings
+global:
+  enabled: true
+  fail_open: true  # Continue execution on callback errors
+  max_execution_time_ms: 100  # Per-agent callback budget
+  log_level: "INFO"
+
+# Agent-specific callback configurations
+agents:
+  security_agent:
+    callbacks:
+      before_model:
+        enabled: true
+        inject_guidelines: true
+      after_tool:
+        enabled: true
+        validate_cve: true
+        filter_false_positives: true
+      after_agent:
+        enabled: true
+        filter_hallucinations: true
+        validate_evidence: true
+  
+  code_quality_agent:
+    callbacks:
+      before_model:
+        enabled: true
+        inject_guidelines: true
+      after_tool:
+        enabled: true
+        validate_metrics: true
+      after_agent:
+        enabled: true
+        filter_bias: true
+        validate_evidence: true
+  
+  engineering_practices_agent:
+    callbacks:
+      before_agent:
+        enabled: true
+        validate_artifacts: true
+      after_agent:
+        enabled: true
+        filter_bias: true
+        validate_completeness: true
+  
+  carbon_emission_agent:
+    callbacks:
+      before_agent:
+        enabled: true
+        validate_artifacts: true
+      after_agent:
+        enabled: true
+        validate_metrics: true
+        filter_bias: true
+  
+  report_synthesizer_agent:
+    callbacks:
+      before_agent:
+        enabled: true
+        validate_artifacts: true
+        check_all_sections: true
+      after_agent:
+        enabled: true
+        filter_hallucinations: true
+        filter_bias: true
+        validate_completeness: true
+
+# Validation thresholds
+thresholds:
+  min_evidence_quality: 0.5
+  max_subjective_terms: 5
+  max_hallucinations: 0
+  min_confidence_score: 0.5
+
+# Performance monitoring
+monitoring:
+  track_execution_time: true
+  alert_on_timeout: true
+  alert_threshold_ms: 150

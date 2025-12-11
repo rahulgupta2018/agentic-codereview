@@ -1,0 +1,104 @@
+version: "1.0.0"
+description: "False positive patterns for filtering known safe code patterns"
+
+# Security Agent False Positives
+security_agent:
+  patterns:
+    - type: "SQL Injection"
+      indicators:
+        - "parameterized query"
+        - "prepared statement"
+        - "execute with parameters"
+        - "query.setParameter"
+      code_pattern: "?"  # Parameterized placeholder
+      reason: "Parameterized queries are safe from SQL injection"
+    
+    - type: "Command Injection"
+      indicators:
+        - "shell=False"
+        - "subprocess.run with list"
+        - "shlex.split"
+      code_pattern: "shell=False"
+      reason: "subprocess with shell=False is safe"
+    
+    - type: "XSS"
+      indicators:
+        - "DOMPurify.sanitize"
+        - "escapeHtml"
+        - "encode HTML"
+      code_pattern: "DOMPurify"
+      reason: "DOMPurify sanitization prevents XSS"
+    
+    - type: "Path Traversal"
+      indicators:
+        - "os.path.normpath"
+        - "Path.resolve"
+        - "sanitized path"
+      code_pattern: "normpath"
+      reason: "Path normalization prevents traversal"
+    
+    - type: "Hardcoded Secrets"
+      indicators:
+        - "environment variable"
+        - "os.getenv"
+        - "process.env"
+        - "config.get"
+      code_pattern: "getenv"
+      reason: "Environment variables are proper secret management"
+
+# Code Quality Agent False Positives
+code_quality_agent:
+  patterns:
+    - type: "High Complexity"
+      indicators:
+        - "switch statement"
+        - "state machine"
+        - "parser logic"
+      reason: "Some algorithms inherently require complexity"
+    
+    - type: "Long Function"
+      indicators:
+        - "main function"
+        - "initialization"
+        - "setup"
+      reason: "Setup/initialization functions may legitimately be long"
+    
+    - type: "Magic Number"
+      indicators:
+        - "HTTP status"
+        - "port number"
+        - "standard constant"
+      reason: "Well-known constants don't need extraction"
+
+# Engineering Practices Agent False Positives
+engineering_practices_agent:
+  patterns:
+    - type: "Missing Documentation"
+      indicators:
+        - "test file"
+        - "mock"
+        - "fixture"
+      reason: "Test utilities may not need full documentation"
+    
+    - type: "Tight Coupling"
+      indicators:
+        - "dependency injection"
+        - "interface"
+        - "abstract"
+      reason: "Proper abstraction patterns are not tight coupling"
+
+# Carbon Emission Agent False Positives
+carbon_emission_agent:
+  patterns:
+    - type: "Inefficient Algorithm"
+      indicators:
+        - "small dataset"
+        - "bounded input"
+        - "one-time operation"
+      reason: "Acceptable for small datasets or rare operations"
+    
+    - type: "Resource Intensive"
+      indicators:
+        - "necessary for correctness"
+        - "required computation"
+      reason: "Some operations inherently require resources"

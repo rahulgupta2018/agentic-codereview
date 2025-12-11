@@ -6,8 +6,11 @@ Following ADK parallel agent patterns like system monitor synthesizer
 
 import sys
 import logging
+import json
+import re
 from pathlib import Path
 from google.adk.agents import Agent
+from google.genai import types
 
 # Setup logging
 logger = logging.getLogger(__name__)
@@ -25,6 +28,131 @@ from util.llm_model import get_agent_model
 # Import artifact tools
 from tools.artifact_loader_tool import load_analysis_results_from_artifacts
 from tools.save_analysis_artifact import save_final_report
+
+# Import callback utilities
+from util.callbacks import (
+    filter_bias,
+    filter_hallucinations,
+    execute_callback_safe,
+    parse_json_safe,
+    format_json_safe,
+)
+from util.metrics import CallbackTimer, get_metrics_collector
+
+# ============================================================================
+# PHASE 1 CALLBACKS
+# ============================================================================
+
+def report_synthesizer_before_agent(callback_context):
+    """Validate all 4 artifacts are present before synthesizing report."""
+    with CallbackTimer("report_synthesizer_agent", "before_agent") as timer:
+        # Check session state for artifacts
+        session_state = callback_context.state
+        
+        required_artifacts = [
+            'security_analysis',
+            'code_quality_analysis',
+            'engineering_practices_analysis',
+            'carbon_emission_analysis'
+        ]
+        
+        missing_artifacts = []
+        for artifact_key in required_artifacts:
+            artifact_value = session_state.get(artifact_key, '')
+            if not artifact_value:
+                missing_artifacts.append(artifact_key)
+        
+        if missing_artifacts:
+            logger.warning(f"⚠️ [report_synthesizer_agent] Missing artifacts: {missing_artifacts}")
+        else:
+            logger.info("✅ [report_synthesizer_agent] All 4 artifacts present in session state")
+        
+        timer.record_filtered('missing_artifacts', len(missing_artifacts))
+        return None
+
+
+def report_synthesizer_after_agent(callback_context):
+    """Validate report completeness, log hallucinations (validation only)."""
+    with CallbackTimer("report_synthesizer_agent", "after_agent") as timer:
+        try:
+            # Access final report from session state
+            text = callback_context.state.get('final_report', '')
+            if not text:
+                logger.warning("⚠️ [report_synthesizer_agent] No final_report in state")
+                return None
+            
+            # Check if report is markdown (not JSON)
+            if text.strip().startswith('{'):
+                logger.warning("⚠️ [report_synthesizer_agent] Report is JSON, not markdown - validation skipped")
+                return None
+            
+            # Validate required sections are present
+            required_sections = [
+                r'#.*Executive Summary',
+                r'#.*Security',
+                r'#.*Code Quality',
+                r'#.*Engineering Practices',
+                r'#.*Environmental Impact',
+                r'#.*Recommendations',
+                r'#.*Next Steps',
+            ]
+            
+            missing_sections = []
+            for section_pattern in required_sections:
+                if not re.search(section_pattern, text, re.IGNORECASE):
+                    section_name = section_pattern.replace(r'#.*', '').replace('\\', '')
+                    missing_sections.append(section_name)
+            
+            if missing_sections:
+                logger.warning(f"⚠️ [report_synthesizer_agent] Report missing sections: {missing_sections}")
+            
+            # Load source artifacts for hallucination filtering
+            source_artifacts = {
+                'security_analysis': callback_context.state.get('security_analysis', ''),
+                'code_quality_analysis': callback_context.state.get('code_quality_analysis', ''),
+                'engineering_practices_analysis': callback_context.state.get('engineering_practices_analysis', ''),
+                'carbon_emission_analysis': callback_context.state.get('carbon_emission_analysis', ''),
+            }
+            
+            # Extract CVE IDs from report
+            report_cves = set(re.findall(r'CVE-\d{4}-\d{4,7}', text, re.IGNORECASE))
+            
+            # Extract CVE IDs from security artifact
+            security_analysis = parse_json_safe(source_artifacts.get('security_analysis', ''))
+            source_cves = set()
+            if security_analysis:
+                for vuln in security_analysis.get('vulnerabilities', []):
+                    if 'cve' in vuln:
+                        source_cves.add(vuln['cve'])
+            
+            # Flag hallucinated CVEs
+            hallucinations_filtered = 0
+            hallucinated_cves = report_cves - source_cves
+            if hallucinated_cves:
+                logger.warning(f"⚠️ [report_synthesizer_agent] Report contains CVEs not in source: {hallucinated_cves}")
+                hallucinations_filtered += len(hallucinated_cves)
+            
+            # Check for bias
+            filtered_text = filter_bias(text)
+            bias_filtered = 1 if filtered_text != text else 0
+            
+            if hallucinations_filtered > 0 or bias_filtered > 0 or missing_sections:
+                logger.info(f"🛡️ [report_synthesizer_agent] Detected: hallucinations={hallucinations_filtered}, bias={bias_filtered}, missing_sections={len(missing_sections)}")
+            
+            # Record metrics
+            timer.record_filtered('hallucinations', hallucinations_filtered)
+            timer.record_filtered('bias', bias_filtered)
+            timer.record_filtered('missing_sections', len(missing_sections))
+            
+            return None  # Validation only, no content modification
+            
+        except Exception as e:
+            logger.error(f"❌ [report_synthesizer_agent] after_agent error: {e}")
+            return None
+
+# ============================================================================
+# AGENT DEFINITION
+# ============================================================================
 
 def create_report_synthesizer_agent() -> Agent:
     """
@@ -264,6 +392,10 @@ ALWAYS call save_final_report() tool after generating your report:
     """.strip(),
         output_key="final_report",
         tools=[load_analysis_results_from_artifacts, save_final_report],
+        
+        # Phase 1 Guardrails: Callbacks
+        before_agent_callback=report_synthesizer_before_agent,
+        after_agent_callback=report_synthesizer_after_agent,
     )
 
 
@@ -273,3 +405,4 @@ report_synthesizer_agent = create_report_synthesizer_agent()
 logger.info("✅ [report_synthesizer_agent] Report Synthesizer Agent created successfully")
 logger.info("🔧 [report_synthesizer_agent] Output key configured: final_report")
 logger.info("🔧 [report_synthesizer_agent] Tools available: ['load_analysis_results_from_artifacts', 'save_final_report']")
+logger.info("🛡️ [report_synthesizer_agent] Phase 1 Guardrails enabled: before_agent, after_agent callbacks")
