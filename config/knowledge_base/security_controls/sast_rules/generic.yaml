@@ -44,21 +44,30 @@ rules:
   - id: "GEN-LOG-SECRET-001"
     enabled: true
     title: "Potential secret in logs"
-    description: "Detects logging of values that look like secrets/tokens."
+    description: "Detects logging of actual secret values (long alphanumeric strings) that look like tokens/keys/passwords."
     category: "Error Handling & Logging"
     severity: "high"
-    confidence: 0.55
+    confidence: 0.65
     cwe: ["CWE-532"]
     owasp_top_10_2021: ["a02_cryptographic_failures"]
     tags: ["logging", "secrets"]
     detection:
       file_globs: ["**/*.*"]
       patterns:
-        - name: "log_token"
-          regex: "(?i)\\b(log|logger\\.|console\\.|print)\\w*\\(.*(token|secret|apikey|api_key|password|authorization).*\\)"
+        - name: "log_secret_value"
+          description: "Logs a secret-like value (token/key/password followed by actual string)"
+          regex: "(?i)\\b(log|logger\\.|console\\.|print)\\w*\\([^)]*\\b(token|secret|apikey|api_key|password|authorization)\\s*[=:,]\\s*['\"]?[A-Za-z0-9_\\-\\+/=]{16,}['\"]?"
+        - name: "log_authorization_header"
+          description: "Logs Authorization header with Bearer token"
+          regex: "(?i)\\b(log|logger\\.|console\\.|print)\\w*\\([^)]*Authorization['\"]?\\s*[:=]\\s*['\"]?Bearer\\s+[A-Za-z0-9_\\-\\+/=]{16,}"
       allowlist_patterns:
         - name: "redaction_keywords"
           regex: "(?i)(redact|masked|sanitize|scrub|hash|sha256)"
+        - name: "metric_counters"
+          description: "Exclude metric/counter variables like tokens_saved, token_count"
+          regex: "(?i)\\b(token|secret|key)[s]?_(saved|count|length|size|number|total|used)\\b"
+        - name: "placeholder_values"
+          regex: "(?i)(example|sample|test|demo|placeholder|dummy|changeme)"
     remediation:
       recommendation: "Do not log secrets. Log only redacted identifiers or hashes, and scrub sensitive fields."
 

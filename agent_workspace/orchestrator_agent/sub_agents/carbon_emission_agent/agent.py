@@ -87,13 +87,13 @@ def carbon_agent_after_agent(callback_context):
             
             metadata, markdown_body = parse_analysis(text)
             if not metadata:
-                logger.warning("⚠️ [carbon_emission_agent] after_agent: Could not parse Markdown+YAML")
+                logger.info("ℹ️  [carbon_emission_agent] after_agent: Could not parse YAML frontmatter (optional)")
                 return None
             
-            # Validate required fields
-            errors = validate_analysis(metadata, markdown_body, 'carbon_emission_agent')
+            # Validate required fields (log only, informational)
+            errors = validate_analysis(metadata, markdown_body, "carbon_emission_agent")
             if errors:
-                logger.warning(f"⚠️ [carbon_emission_agent] Validation errors: {errors}")
+                logger.info("ℹ️  [carbon_emission_agent] YAML frontmatter validation (optional): %s", errors)
             
             # Filter greenwashing terms from markdown body
             greenwashing_patterns = [

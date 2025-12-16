@@ -196,3 +196,4 @@ Commands:
 
   Test the flow 
   ./scripts/stop_adk_api_server.sh && sleep 2 && ./scripts/start_adk_api_server.sh
+  python3 tests/api/test_adapter_simple.py

@@ -171,13 +171,13 @@ def quality_agent_after_agent(callback_context):
             
             metadata, markdown_body = parse_analysis(text)
             if not metadata:
-                logger.warning("⚠️ [code_quality_agent] after_agent: Could not parse Markdown+YAML")
+                logger.info("ℹ️  [code_quality_agent] after_agent: Could not parse YAML frontmatter (optional)")
                 return None
             
-            # Validate required fields
+            # Validate required fields (log only, informational)
             errors = validate_analysis(metadata, markdown_body, 'code_quality_agent')
             if errors:
-                logger.warning(f"⚠️ [code_quality_agent] Validation errors: {errors}")
+                logger.info(f"ℹ️  [code_quality_agent] YAML frontmatter validation (optional): {errors}")
             
             # Filter subjective/biased language from markdown body
             bias_patterns = [

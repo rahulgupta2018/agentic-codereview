@@ -320,13 +320,13 @@ def security_agent_after_agent(callback_context):
 
             metadata, markdown_body = parse_analysis(text)
             if not metadata:
-                logger.warning("⚠️ [security_agent] after_agent: Could not parse Markdown+YAML")
+                logger.info("ℹ️  [security_agent] after_agent: Could not parse YAML frontmatter (optional)")
                 return None
 
-            # Validate required fields (log only)
+            # Validate required fields (log only, informational)
             errors = validate_analysis(metadata, markdown_body, "security_agent")
             if errors:
-                logger.warning("⚠️ [security_agent] Validation errors: %s", errors)
+                logger.info("ℹ️  [security_agent] YAML frontmatter validation (optional): %s", errors)
 
             # 1) Bias/profanity filtering (centralized, config-driven)
             filtered_body, bias_filtered = filter_bias(markdown_body)
@@ -465,24 +465,32 @@ For each issue include:
 
 NO-ISSUE CASE:
 - If the scan reports zero findings, write exactly:
-  "No significant security issues found."
 
-STEP 5: Save your analysis (MANDATORY)
-After completing the report, you MUST call:
+---
+agent: security_agent
+summary: No significant security issues found
+total_issues: 0
+severity:
+  critical: 0
+  high: 0
+  medium: 0
+  low: 0
+confidence: 1.0
+---
 
-save_analysis_result(
-  analysis_data="<your complete Markdown+YAML analysis>",
-  agent_name="security_agent"
-)
+# Security Analysis
+
+No significant security issues detected in the codebase.
 
 CRITICAL RULES
 - ALWAYS call scan_security_vulnerabilities() first.
-- ALWAYS call save_analysis_result() last.
+- Output your analysis in Markdown+YAML format (ADK will auto-save via output_key).
 - NEVER hallucinate evidence (paths, lines, snippets, CVEs).
 - Prefer fewer, higher-confidence findings over speculative ones.
+- Your complete Markdown+YAML output will be automatically saved to session state.
     """.strip(),
     output_key="security_analysis",
-    tools=[scan_security_vulnerabilities, save_analysis_result],
+    tools=[scan_security_vulnerabilities],
     
     # Phase 1 Guardrails: Callbacks
     before_model_callback=security_agent_before_model,
@@ -491,5 +499,5 @@ CRITICAL RULES
 )
 
 logger.info("✅ [security_agent] Security Analysis Agent created successfully")
-logger.info(f"🔧 [security_agent] Tools available: {[tool.__name__ if hasattr(tool, '__name__') else str(tool) for tool in [scan_security_vulnerabilities, save_analysis_result]]}")
+logger.info(f"🔧 [security_agent] Tools available: {[tool.__name__ if hasattr(tool, '__name__') else str(tool) for tool in [scan_security_vulnerabilities]]}")
 logger.info("🛡️ [security_agent] Phase 1 Guardrails enabled: before_model, after_tool, after_agent callbacks")

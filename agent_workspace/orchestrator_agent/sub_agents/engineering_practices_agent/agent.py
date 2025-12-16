@@ -114,13 +114,13 @@ def engineering_agent_after_agent(callback_context):
             
             metadata, markdown_body = parse_analysis(text)
             if not metadata:
-                logger.warning("⚠️ [engineering_practices_agent] after_agent: Could not parse Markdown+YAML")
+                logger.info("ℹ️  [engineering_practices_agent] after_agent: Could not parse YAML frontmatter (optional)")
                 return None
             
-            # Validate required fields
-            errors = validate_analysis(metadata, markdown_body, 'engineering_practices_agent')
+            # Validate required fields (log only, informational)
+            errors = validate_analysis(metadata, markdown_body, "engineering_practices_agent")
             if errors:
-                logger.warning(f"⚠️ [engineering_practices_agent] Validation errors: {errors}")
+                logger.info("ℹ️  [engineering_practices_agent] YAML frontmatter validation (optional): %s", errors)
             
             # Check for dogmatic recommendations in markdown body
             dogma_patterns = [

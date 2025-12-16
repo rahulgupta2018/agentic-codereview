@@ -181,7 +181,7 @@ class CodeReviewOrchestrator:
         All agents run sequentially, every time (deterministic).
         
         Pipeline Flow:
-        0. GitHub Data Adapter → Transform PR data for analysis tools
+        0. GitHub Data Adapter → Transform PR data for analysis tools (runs in before_agent_callback)
         1. Security Agent
         2. Code Quality Agent
         3. Engineering Practices Agent
@@ -204,6 +204,7 @@ class CodeReviewOrchestrator:
                 self.carbon_agent,                # Step 4: Carbon
             ],
             description="Run all code analysis agents sequentially",
+            before_agent_callback=self.analysis_pipeline_before_agent_callback,
         )
         
         logger.info(f"✅ [_create_analysis_pipeline] Created AnalysisPipeline with {len(pipeline.sub_agents)} sub-agents")
@@ -243,7 +244,7 @@ class CodeReviewOrchestrator:
                 # self.github_publisher,    # Step 6: Publish (DISABLED - GitHub integration not yet implemented)
             ],
             description="Complete GitHub PR review workflow from fetching to analysis to reporting",
-            before_agent_callback=self.orchestrator_before_agent_callback,
+            before_agent_callback=self.root_pipeline_before_agent_callback,
         )
         
         logger.info(f"✅ [_create_github_pr_review_pipeline] Created GitHubPRReviewPipeline with {len(pipeline.sub_agents)} top-level steps")
@@ -272,8 +273,14 @@ class CodeReviewOrchestrator:
         logger.info(f"📤 [get_github_pipeline] Returning GitHub pipeline: {self.root_agent.name}")
         return self.root_agent
 
-    def orchestrator_before_agent_callback(self, callback_context):
-        # 1) Load KBs once into session state
+    def root_pipeline_before_agent_callback(self, callback_context):
+        """
+        Root pipeline callback - runs once at the very start.
+        
+        Responsibilities:
+        - Load knowledge bases into session state
+        """
+        # Load KBs once into session state
         if not callback_context.state.get("_kbs_loaded"):
             kb_root = project_root / "config" / "knowledge_base"
             ensure_kbs_in_state(
@@ -281,18 +288,31 @@ class CodeReviewOrchestrator:
                 kb_root=str(kb_root),
                 strict=True,   # set False if you want boot even when some KBs missing
             )
+            logger.info("✅ [root_pipeline] Knowledge bases loaded into session state")
 
+    def analysis_pipeline_before_agent_callback(self, callback_context):
+        """
+        Analysis pipeline callback - runs AFTER GitHub fetcher, BEFORE analysis agents.
+        
+        Responsibilities:
+        - Run GitHub data adapter to prepare files for analysis
+        - This callback executes after fetcher has populated github_pr_files
+        """
         logger.info(
-            "bootstrap: github_pr_files=%s files_prepared=%s kbs_loaded=%s",
+            "🔍 [analysis_pipeline] Before agent check: github_pr_files=%s files_prepared=%s",
             bool(callback_context.state.get("github_pr_files")),
             bool(callback_context.state.get("files_prepared")),
-            bool(callback_context.state.get("_kbs_loaded")),
         )
-        # =========================================================================
-         # 2) Run GitHub adapter deterministically once AFTER fetcher populates github_pr_files
+        
+        # Run GitHub adapter deterministically once AFTER fetcher populates github_pr_files
         if callback_context.state.get("github_pr_files") and not callback_context.state.get("files_prepared"):
+            logger.info("🔄 [analysis_pipeline] Running prepare_files_for_analysis...")
             result = prepare_files_for_analysis(_ToolContextShim(callback_context.state))
-            logger.info("✅ prepare_files_for_analysis result: %s", result.get("status"))
+            logger.info("✅ [analysis_pipeline] prepare_files_for_analysis result: %s", result.get("status"))
+        elif not callback_context.state.get("github_pr_files"):
+            logger.warning("⚠️ [analysis_pipeline] No github_pr_files found - analysis agents will have no code!")
+        elif callback_context.state.get("files_prepared"):
+            logger.info("✅ [analysis_pipeline] Files already prepared, skipping adapter")
 
 # =========================================================================
 # MODULE-LEVEL EXPORTS

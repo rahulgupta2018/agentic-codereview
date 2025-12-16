@@ -106,10 +106,21 @@ def prepare_files_for_analysis(tool_context: ToolContext) -> Dict[str, Any]:
         else:
             primary_language = "unknown"
         
+        # Build file_path string that preserves individual file names for better reporting
+        if len(github_pr_files) == 1:
+            file_path_str = file_summaries[0]['file_path']
+        elif len(github_pr_files) <= 3:
+            # Show up to 3 filenames
+            file_path_str = ", ".join([f['file_path'] for f in file_summaries])
+        else:
+            # Show first 2 and count
+            first_two = ", ".join([f['file_path'] for f in file_summaries[:2]])
+            file_path_str = f"{first_two}, ... ({len(github_pr_files)} files total)"
+        
         # Store prepared data in session state (for analysis tools to read)
         tool_context.state['code'] = combined_code
         tool_context.state['language'] = primary_language
-        tool_context.state['file_path'] = f"PR_combined_{len(github_pr_files)}_files"
+        tool_context.state['file_path'] = file_path_str  # Improved: shows actual filenames
         tool_context.state['files'] = file_summaries
         tool_context.state['files_prepared'] = True
         tool_context.state['file_count'] = len(github_pr_files)
