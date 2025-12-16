@@ -11,23 +11,17 @@ Architecture:
 ✅ GitHubPRReviewPipeline (SequentialAgent) - ROOT AGENT:
   ├─ github_fetcher_agent                    (Step 1: Fetch PR data)
   ├─ AnalysisPipeline (SequentialAgent)      (Step 2: Run all analyses)
-  |   ├─ github_data_adapter_agent           (Step 2.1: Transform GitHub PR file data)
-  │   ├─ security_agent                      (Step 2.2: Security analysis)
-  │   ├─ code_quality_agent                  (Step 2.3: Code quality analysis)
-  │   ├─ engineering_agent                   (Step 2.4: Engineering practices analysis)
-  │   └─ carbon_agent                        (Step 2.5: Carbon emission analysis)
+  |   ├─ security_agent                      (Step 2.1: Security analysis)
+  │   ├─ code_quality_agent                  (Step 2.2: Code quality analysis)
+  │   ├─ engineering_agent                   (Step 2.3: Engineering practices analysis)
+  │   └─ carbon_agent                        (Step 2.4: Carbon emission analysis)
   ├─ artifact_saver_agent                    (Step 3: Save analysis artifacts)
   ├─ report_synthesizer_agent                (Step 4: Synthesize report)
   ├─ report_saver_agent                      (Step 5: Save final report)
   └─ github_publisher_agent                  (Step 6: Publish to GitHub)
 
-Design: Simple, deterministic, maintainable.
+GitHub data adapter runs in orchestrator as agent callback
 All agents run every time - no dynamic routing or planning complexity.
-
-DISABLED Components (kept for reference):
-- ❌ classifier_agent (not needed for GitHub webhooks)
-- ❌ planning_agent (not needed - all agents run every time)
-- ❌ dynamic_router_agent (not needed - simple sequential execution)
 
 Key Design Principles:
 - ✅ Deterministic workflows - same agents, same order, every time
@@ -41,7 +35,7 @@ import sys
 import logging
 from pathlib import Path
 from typing import Dict, Any, Optional
-from google.adk.agents import SequentialAgent, ParallelAgent, Agent
+from google.adk.agents import SequentialAgent, Agent
 
 # Setup logging
 logger = logging.getLogger(__name__)
@@ -70,7 +64,7 @@ logger.info("ℹ️  [Orchestrator] Using ADK-provided services (session + artif
 # Import sub-agents for simplified sequential pipeline
 from .sub_agents.github_fetcher_agent.agent import github_fetcher_agent
 from .sub_agents.github_publisher_agent.agent import github_publisher_agent
-from .sub_agents.github_data_adapter_agent.agent import github_data_adapter_agent
+# from .sub_agents.github_data_adapter_agent.agent import github_data_adapter_agent
 from .sub_agents.security_agent.agent import security_agent
 from .sub_agents.code_quality_agent.agent import code_quality_agent
 from .sub_agents.engineering_practices_agent.agent import engineering_practices_agent
@@ -85,6 +79,20 @@ from .sub_agents.report_synthesizer_agent.agent import create_report_synthesizer
 # from .sub_agents.planning_agent.agent import create_planning_agent
 # from .sub_agents.dynamic_router_agent.agent import DynamicRouterAgent
 
+from util.knowledge_base_loader import ensure_kbs_in_state
+from tools.github_data_adapter import prepare_files_for_analysis
+
+# =========================================================================
+# INTERNAL HELPERS
+# =========================================================================
+
+class _ToolContextShim:
+    """
+    Minimal shim to adapt CallbackContext to ToolContext.
+    prepare_files_for_analysis only needs .state.
+    """
+    def __init__(self, state):
+        self.state = state
 
 # =========================================================================
 # CODE REVIEW ORCHESTRATOR CLASS
@@ -101,7 +109,6 @@ class CodeReviewOrchestrator:
     
     See: SIMPLIFIED_SEQUENTIAL_PIPELINE_DESIGN.md
     """
-    
     def __init__(self):
         """Initialize orchestrator with simplified sequential pipeline."""
         
@@ -118,12 +125,12 @@ class CodeReviewOrchestrator:
         logger.info("✅ [Orchestrator] GitHub fetcher loaded")
         
         # Step 2: Analysis agents (will be nested in AnalysisPipeline)
-        self.github_data_adapter_agent = github_data_adapter_agent
+        # self.github_data_adapter_agent = github_data_adapter_agent
         self.security_agent = security_agent
         self.code_quality_agent = code_quality_agent
         self.engineering_agent = engineering_practices_agent
         self.carbon_agent = carbon_emission_agent
-        logger.info("✅ [Orchestrator] GitHub data adapter loaded")
+        logger.info("✅ [Orchestrator] GitHub data adapter tool will run via bootstrap callback")
         logger.info("✅ [Orchestrator] Analysis agents loaded (4 agents)")
         
         # Step 3: Artifact Saver (saves analysis results to disk)
@@ -142,21 +149,9 @@ class CodeReviewOrchestrator:
         self.github_publisher = github_publisher_agent
         logger.info("✅ [Orchestrator] GitHub publisher loaded")
         
-        # =====================================================================
-        # DISABLED COMPONENTS (kept for reference)
-        # =====================================================================
-        # These are commented out but not deleted - see SIMPLIFIED_SEQUENTIAL_PIPELINE_DESIGN.md
-        #
-        # self.classifier = classifier_agent  # Not needed for GitHub webhooks
-        # self.planning_agent = create_planning_agent()  # Not needed - all agents run
-        # self.dynamic_router = DynamicRouterAgent(...)  # Not needed - simple sequential
-        # self.analysis_agent_registry = {...}  # Not needed - no dynamic routing
-        
-        logger.info("ℹ️  [Orchestrator] Disabled: classifier, planning, dynamic router (see design doc)")
-        
-        # =====================================================================
+        # =========================================================================
         # BUILD SEQUENTIAL PIPELINE
-        # =====================================================================
+        # =========================================================================
         
         # Create nested analysis pipeline first
         self.analysis_pipeline = self._create_analysis_pipeline()
@@ -193,7 +188,7 @@ class CodeReviewOrchestrator:
         4. Carbon Emission Agent
         """
         logger.info("🔧 [_create_analysis_pipeline] Building nested AnalysisPipeline...")
-        logger.info(f"   Agent 0: {self.github_data_adapter_agent.name}")
+       # logger.info(f"   Agent 0: {self.github_data_adapter_agent.name}")
         logger.info(f"   Agent 1: {self.security_agent.name}")
         logger.info(f"   Agent 2: {self.code_quality_agent.name}")
         logger.info(f"   Agent 3: {self.engineering_agent.name}")
@@ -202,13 +197,13 @@ class CodeReviewOrchestrator:
         pipeline = SequentialAgent(
             name="AnalysisPipeline",
             sub_agents=[
-                self.github_data_adapter_agent,  # Step 0: Prepare data
+               # self.github_data_adapter_agent,  # Step 0: Prepare data
                 self.security_agent,              # Step 1: Security
                 self.code_quality_agent,          # Step 2: Quality
                 self.engineering_agent,           # Step 3: Engineering
                 self.carbon_agent,                # Step 4: Carbon
             ],
-            description="Transform GitHub PR data and run all code analysis agents sequentially"
+            description="Run all code analysis agents sequentially",
         )
         
         logger.info(f"✅ [_create_analysis_pipeline] Created AnalysisPipeline with {len(pipeline.sub_agents)} sub-agents")
@@ -247,7 +242,8 @@ class CodeReviewOrchestrator:
                 self.report_saver,          # Step 5: Save report to disk
                 # self.github_publisher,    # Step 6: Publish (DISABLED - GitHub integration not yet implemented)
             ],
-            description="Complete GitHub PR review workflow from fetching to analysis to reporting"
+            description="Complete GitHub PR review workflow from fetching to analysis to reporting",
+            before_agent_callback=self.orchestrator_before_agent_callback,
         )
         
         logger.info(f"✅ [_create_github_pr_review_pipeline] Created GitHubPRReviewPipeline with {len(pipeline.sub_agents)} top-level steps")
@@ -276,6 +272,27 @@ class CodeReviewOrchestrator:
         logger.info(f"📤 [get_github_pipeline] Returning GitHub pipeline: {self.root_agent.name}")
         return self.root_agent
 
+    def orchestrator_before_agent_callback(self, callback_context):
+        # 1) Load KBs once into session state
+        if not callback_context.state.get("_kbs_loaded"):
+            kb_root = project_root / "config" / "knowledge_base"
+            ensure_kbs_in_state(
+                callback_context,
+                kb_root=str(kb_root),
+                strict=True,   # set False if you want boot even when some KBs missing
+            )
+
+        logger.info(
+            "bootstrap: github_pr_files=%s files_prepared=%s kbs_loaded=%s",
+            bool(callback_context.state.get("github_pr_files")),
+            bool(callback_context.state.get("files_prepared")),
+            bool(callback_context.state.get("_kbs_loaded")),
+        )
+        # =========================================================================
+         # 2) Run GitHub adapter deterministically once AFTER fetcher populates github_pr_files
+        if callback_context.state.get("github_pr_files") and not callback_context.state.get("files_prepared"):
+            result = prepare_files_for_analysis(_ToolContextShim(callback_context.state))
+            logger.info("✅ prepare_files_for_analysis result: %s", result.get("status"))
 
 # =========================================================================
 # MODULE-LEVEL EXPORTS

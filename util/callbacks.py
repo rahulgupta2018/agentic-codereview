@@ -457,45 +457,6 @@ def _extract_findings(data: Any, findings: List[Dict]):
 
 
 # ============================================================================
-# UTILITY FUNCTIONS
-# ============================================================================
-
-def parse_json_safe(text: str) -> Optional[Dict]:
-    """Safely parse JSON from text, handling markdown code fences."""
-    try:
-        # Strip markdown code fences
-        text = text.strip()
-        if text.startswith('```json'):
-            lines = text.split('\n')
-            if lines[0].startswith('```'):
-                lines = lines[1:]
-            if lines and lines[-1].strip() == '```':
-                lines = lines[:-1]
-            text = '\n'.join(lines).strip()
-        elif text.startswith('```'):
-            lines = text.split('\n')
-            if lines[0].startswith('```'):
-                lines = lines[1:]
-            if lines and lines[-1].strip() == '```':
-                lines = lines[:-1]
-            text = '\n'.join(lines).strip()
-        
-        return json.loads(text)
-    except Exception as e:
-        logger.error(f"❌ Failed to parse JSON: {e}")
-        return None
-
-
-def format_json_safe(data: Any) -> str:
-    """Safely format data as JSON string."""
-    try:
-        return json.dumps(data, indent=2)
-    except Exception as e:
-        logger.error(f"❌ Failed to format JSON: {e}")
-        return str(data)
-
-
-# ============================================================================
 # CALLBACK EXECUTION WRAPPER
 # ============================================================================
 

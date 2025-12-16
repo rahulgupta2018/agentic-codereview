@@ -1,6 +1,7 @@
 google-adk
 litellm
 python-multipart
+PyYAML  # For Markdown+YAML frontmatter parsing
 
 # MCP GitHub Integration 
 mcp[cli]

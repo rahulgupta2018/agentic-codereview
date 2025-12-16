@@ -15,9 +15,6 @@ from pathlib import Path
 from google.adk.agents import Agent
 from google.genai import types
 
-# Setup logging
-logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
 
 # Add project root to Python path for absolute imports
 # __file__ is in agent_workspace/orchestrator_agent/sub_agents/security_agent/
@@ -27,21 +24,26 @@ sys.path.insert(0, str(project_root))
 
 # Import centralized model configuration
 from util.llm_model import get_sub_agent_model
-
-# Import tools
-from tools.security_vulnerability_scanner import scan_security_vulnerabilities
-from tools.save_analysis_artifact import save_analysis_result
+from util.markdown_yaml_parser import parse_analysis, validate_analysis, filter_content
 
 # Import callback utilities
 from util.callbacks import (
     validate_cve_exists,
     filter_bias,
     filter_false_positives,
-    execute_callback_safe,
-    parse_json_safe,
-    format_json_safe
+    execute_callback_safe
 )
 from util.metrics import CallbackTimer, get_metrics_collector
+from util.markdown_yaml_parser import parse_analysis, reconstruct_analysis, validate_analysis
+from util.security_enrichment import compute_confidence, adjust_severity_by_confidence, attach_guideline_refs
+
+# Import tools
+from tools.security_vulnerability_scanner import scan_security_vulnerabilities
+from tools.save_analysis_artifact import save_analysis_result
+
+# Setup logging
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
 
 # Get the centralized model instance
 logger.info("🔧 [security_agent] Initializing Security Analysis Agent")
@@ -91,118 +93,288 @@ CRITICAL SECURITY ANALYSIS RULES:
 
 def security_agent_after_tool(tool, args, tool_context, tool_response):
     """
-    After Tool Callback - Validate vulnerability findings and filter false positives.
-    
-    Args:
-        tool: Tool object or name
-        args: Tool arguments (dict)
-        tool_context: Tool execution context
-        tool_response: Tool response (dict)
-    
-    Returns:
-        Modified tool_response or None
+    After Tool Callback - Normalize findings, filter false positives, enrich with
+    confidence + guideline references, and recompute summary.
+
+    Expected tool_response (merged scanner):
+      - owasp_top_10_analysis: {category: [finding...], ...}
+      - sast_rules: {findings: [finding...], ...}
+      - (optional) vulnerabilities (legacy)
+
+    Produces:
+      - tool_response["vulnerabilities"]: final, enriched list
+      - tool_response["vulnerability_summary"]: recomputed from final severities
     """
     with CallbackTimer("security_agent", "after_tool") as timer:
         try:
-            tool_name = tool if isinstance(tool, str) else getattr(tool, 'name', str(tool))
-            if tool_name != 'scan_security_vulnerabilities':
+            tool_name = tool if isinstance(tool, str) else getattr(tool, "name", str(tool))
+            if tool_name != "scan_security_vulnerabilities":
                 return None
-            
+
             if not isinstance(tool_response, dict):
                 logger.warning("⚠️ [security_agent] after_tool: tool_response not a dict")
                 return None
-            
-            vulnerabilities = tool_response.get('vulnerabilities', [])
+
+            # ------------------------------------------------------------------
+            # 1) Normalize: flatten OWASP + SAST + legacy findings
+            # ------------------------------------------------------------------
+            vulnerabilities = []
+
+            # A) SAST rule findings
+            sast_block = tool_response.get("sast_rules") or {}
+            sast_findings = (
+                sast_block.get("findings", [])
+                if isinstance(sast_block, dict)
+                else []
+            )
+
+            for f in sast_findings:
+                if not isinstance(f, dict):
+                    continue
+                vulnerabilities.append({
+                    "source": "sast",
+                    "type": f.get("type") or "sast_rule_match",
+                    "rule_id": f.get("rule_id"),
+                    "title": f.get("title"),
+                    "description": f.get("description") or f.get("message"),
+                    "category": f.get("category"),
+                    "severity": (f.get("severity") or "low").lower(),
+                    "confidence": f.get("confidence"),
+                    "file_path": f.get("file_path") or tool_response.get("file_path"),
+                    "line": f.get("line"),
+                    "code_snippet": f.get("code_snippet") or f.get("evidence"),
+                    "cwe": f.get("cwe") or ([] if not f.get("cwe_id") else [f.get("cwe_id")]),
+                    "owasp_top_10_2021": f.get("owasp_top_10_2021") or [],
+                })
+
+            # B) OWASP category findings
+            owasp_block = tool_response.get("owasp_top_10_analysis") or {}
+            if isinstance(owasp_block, dict):
+                for owasp_category, findings in owasp_block.items():
+                    if not isinstance(findings, list):
+                        continue
+                    for f in findings:
+                        if not isinstance(f, dict):
+                            continue
+                        vulnerabilities.append({
+                            "source": "owasp",
+                            "type": f.get("type") or owasp_category,
+                            "subtype": f.get("subtype"),
+                            "title": f.get("title") or f.get("message") or owasp_category,
+                            "description": f.get("description") or f.get("message"),
+                            "category": f.get("category"),
+                            "severity": (f.get("severity") or "low").lower(),
+                            "confidence": f.get("confidence"),
+                            "file_path": f.get("file_path") or tool_response.get("file_path"),
+                            "line": f.get("line"),
+                            "code_snippet": f.get("code_snippet") or f.get("evidence"),
+                            "cwe": f.get("cwe") or ([] if not f.get("cwe_id") else [f.get("cwe_id")]),
+                            "owasp_top_10_2021": f.get("owasp_top_10_2021") or [],
+                        })
+
+            # C) Legacy vulnerabilities (if any)
+            legacy_vulns = tool_response.get("vulnerabilities")
+            if isinstance(legacy_vulns, list):
+                for f in legacy_vulns:
+                    if isinstance(f, dict):
+                        vulnerabilities.append(f)
+
+            # De-duplicate
+            deduped = []
+            seen = set()
+            for v in vulnerabilities:
+                key = (
+                    v.get("rule_id") or "",
+                    v.get("type") or "",
+                    v.get("file_path") or "",
+                    v.get("line") or 0,
+                    (v.get("code_snippet") or "")[:80],
+                )
+                if key in seen:
+                    continue
+                seen.add(key)
+                deduped.append(v)
+
+            vulnerabilities = deduped
+
             if not vulnerabilities:
-                return None
-            
-            # Filter false positives
-            filtered_vulns, removed_count = filter_false_positives(vulnerabilities, 'security_agent')
-            timer.record_filtered('false_positives', removed_count)
-            
-            # Validate evidence fields
+                tool_response["vulnerabilities"] = []
+                tool_response["vulnerability_summary"] = {
+                    "total_vulnerabilities": 0,
+                    "critical_vulnerabilities": 0,
+                    "high_vulnerabilities": 0,
+                    "medium_vulnerabilities": 0,
+                    "low_vulnerabilities": 0,
+                }
+                return tool_response
+
+            # ------------------------------------------------------------------
+            # 2) Filter false positives
+            # ------------------------------------------------------------------
+            filtered_vulns, removed_count = filter_false_positives(
+                vulnerabilities, "security_agent"
+            )
+            timer.record_filtered("false_positives", removed_count)
+
+            # ------------------------------------------------------------------
+            # 3) Validate minimal evidence
+            # ------------------------------------------------------------------
             validated_vulns = []
             for vuln in filtered_vulns:
-                # Check required evidence fields
-                has_location = vuln.get('location') or vuln.get('file_path')
-                has_description = vuln.get('description')
-                has_evidence = vuln.get('line') or vuln.get('code_snippet') or vuln.get('cve')
-                
-                if has_location and has_description and has_evidence:
+                has_description = bool(vuln.get("description") or vuln.get("title"))
+                has_evidence = bool(vuln.get("line") or vuln.get("code_snippet"))
+                if has_description and has_evidence:
                     validated_vulns.append(vuln)
                 else:
-                    logger.debug(f"🚫 [security_agent] Filtered vuln without evidence: {vuln.get('type', 'unknown')}")
-                    timer.record_filtered('missing_evidence', 1)
-            
-            tool_response['vulnerabilities'] = validated_vulns
-            
-            logger.info(f"✅ [security_agent] after_tool: Validated {len(validated_vulns)}/{len(vulnerabilities)} vulnerabilities")
-            
+                    timer.record_filtered("missing_evidence", 1)
+
+            # ------------------------------------------------------------------
+            # 4) Enrich: confidence, severity adjustment, guideline refs
+            # ------------------------------------------------------------------
+            from util.security_enrichment import (
+                compute_confidence,
+                adjust_severity_by_confidence,
+                attach_guideline_refs,
+            )
+
+            security_guidelines = tool_context.state.get("security_guidelines") or {}
+
+            enriched = []
+            for vuln in validated_vulns:
+                conf = compute_confidence(vuln)
+                vuln["confidence"] = conf
+                vuln["severity"] = adjust_severity_by_confidence(
+                    vuln.get("severity", "low"), conf
+                )
+                vuln = attach_guideline_refs(vuln, security_guidelines)
+                enriched.append(vuln)
+
+            tool_response["vulnerabilities"] = enriched
+
+            # ------------------------------------------------------------------
+            # 5) Recompute vulnerability summary AFTER enrichment
+            # ------------------------------------------------------------------
+            summary = {
+                "total_vulnerabilities": len(enriched),
+                "critical_vulnerabilities": 0,
+                "high_vulnerabilities": 0,
+                "medium_vulnerabilities": 0,
+                "low_vulnerabilities": 0,
+            }
+
+            for vuln in enriched:
+                sev = (vuln.get("severity") or "low").lower()
+                key = f"{sev}_vulnerabilities"
+                if key in summary:
+                    summary[key] += 1
+
+            tool_response["vulnerability_summary"] = summary
+
+            logger.info(
+                "✅ [security_agent] after_tool: normalized=%d filtered=%d validated=%d final=%d",
+                len(vulnerabilities),
+                len(filtered_vulns),
+                len(validated_vulns),
+                len(enriched),
+            )
+
             return tool_response
-        
+
         except Exception as e:
-            logger.error(f"❌ [security_agent] after_tool error: {e}")
+            logger.error(
+                "❌ [security_agent] after_tool error: %s", e, exc_info=True
+            )
             return None  # Fail open
 
 
 def security_agent_after_agent(callback_context):
     """
-    After Agent Callback - Validate CVEs, log bias detection (validation only).
-    
-    Note: ADK only passes callback_context (no content parameter).
-    Accesses agent output via session state for validation.
-    
-    Quality Gates:
-    - Validate CVE IDs against NVD database
-    - Check for bias/profanity in descriptions
-    - Record metrics (validation only, no content modification)
+    After Agent Callback - Validate and sanitize the final security analysis.
+
+    Accesses agent output via session state:
+      - Parses Markdown+YAML
+      - Validates required metadata/body structure
+      - Applies centralized bias/profanity filtering
+      - Detects invalid CVEs (and optionally removes them from the text)
+      - Writes corrected output back into state when changes were made
     """
     with CallbackTimer("security_agent", "after_agent") as timer:
         try:
-            # Access security analysis from session state
-            text = callback_context.state.get('security_analysis', '')
-            if not text:
-                logger.warning("⚠️ [security_agent] No security_analysis in state")
-                return None
-            
-            # Parse JSON
-            analysis = parse_json_safe(text)
+            analysis = callback_context.state.get("security_analysis", "")
             if not analysis:
-                logger.warning("⚠️ [security_agent] after_agent: Could not parse JSON")
+                logger.warning("⚠️ [security_agent] No security_analysis in state")
+                # Helpful context: tool output lives elsewhere now
+                if callback_context.state.get("security_scan_result"):
+                    logger.info("ℹ️ [security_agent] security_scan_result exists (tool output). Agent output_key 'security_analysis' is missing.")
                 return None
-            
-            # Validate and filter CVEs
-            cve_filtered = 0
-            for vuln in analysis.get('vulnerabilities', []):
-                if 'cve' in vuln or 'cve_id' in vuln:
-                    cve_field = 'cve' if 'cve' in vuln else 'cve_id'
-                    cve_id = vuln[cve_field]
-                    
-                    if not validate_cve_exists(cve_id):
-                        logger.warning(f"🚫 [security_agent] Removed hallucinated CVE: {cve_id}")
-                        del vuln[cve_field]
-                        cve_filtered += 1
-            
-            timer.record_filtered('invalid_cves', cve_filtered)
-            
-            # Filter bias/profanity from descriptions
-            bias_filtered = 0
-            for vuln in analysis.get('vulnerabilities', []):
-                if 'description' in vuln:
-                    original = vuln['description']
-                    filtered, count = filter_bias(original)
-                    if count > 0:
-                        vuln['description'] = filtered
-                        bias_filtered += count
-            
-            timer.record_filtered('bias', bias_filtered)
-            
-            logger.info(f"✅ [security_agent] after_agent: Detected {cve_filtered} invalid CVEs, {bias_filtered} biased terms")
-            
-            return None  # Validation only, no content modification
-        
+
+            # At this point, security_analysis SHOULD always be a string (agent output).
+            if not isinstance(analysis, str):
+                logger.warning(
+                    "⚠️ [security_agent] Expected security_analysis to be a string, got %s. Skipping validation.",
+                    type(analysis).__name__,
+                )
+                return None
+
+            text = analysis
+
+            metadata, markdown_body = parse_analysis(text)
+            if not metadata:
+                logger.warning("⚠️ [security_agent] after_agent: Could not parse Markdown+YAML")
+                return None
+
+            # Validate required fields (log only)
+            errors = validate_analysis(metadata, markdown_body, "security_agent")
+            if errors:
+                logger.warning("⚠️ [security_agent] Validation errors: %s", errors)
+
+            # 1) Bias/profanity filtering (centralized, config-driven)
+            filtered_body, bias_filtered = filter_bias(markdown_body)
+            timer.record_filtered("bias", bias_filtered)
+
+            if bias_filtered > 0:
+                logger.warning(
+                    "🚫 [security_agent] filter_bias removed %d biased/profane replacements",
+                    bias_filtered,
+                )
+
+            # 2) CVE validation
+            import re
+            cve_pattern = r"CVE-\d{4}-\d{4,7}"
+            cves_found = re.findall(cve_pattern, filtered_body)
+
+            invalid_cves = []
+            for cve_id in cves_found:
+                if not validate_cve_exists(cve_id):
+                    logger.warning("🚫 [security_agent] Found potentially hallucinated/invalid CVE: %s", cve_id)
+                    invalid_cves.append(cve_id)
+
+            cve_filtered = len(invalid_cves)
+            timer.record_filtered("invalid_cves", cve_filtered)
+
+            # OPTIONAL: remove invalid CVEs from the text (prevention instead of just detection)
+            if invalid_cves:
+                for cve_id in invalid_cves:
+                    filtered_body = re.sub(rf"\b{re.escape(cve_id)}\b", "[invalid-cve-removed]", filtered_body)
+
+            # 3) Write back only if we changed something
+            changed = (bias_filtered > 0) or (cve_filtered > 0)
+            if changed:
+                fixed = reconstruct_analysis(metadata, filtered_body)
+                callback_context.state["security_analysis"] = fixed
+
+            logger.info(
+                "✅ [security_agent] after_agent: Checked %d CVEs (%d invalid), %d bias/profanity replacements%s",
+                len(cves_found),
+                cve_filtered,
+                bias_filtered,
+                " (updated state)" if changed else "",
+            )
+
+            return None  # Fail-open; pipeline continues
+
         except Exception as e:
-            logger.error(f"❌ [security_agent] after_agent error: {e}")
+            logger.error("❌ [security_agent] after_agent error: %s", e, exc_info=True)
             return None  # Fail open
 
 
@@ -216,114 +388,101 @@ security_agent = Agent(
     name="security_agent",
     model=agent_model,
     description="Analyzes security vulnerabilities and compliance issues",
-    instruction="""You are a Security Analysis Agent in a sequential code review pipeline.
-    
-    Your job: Scan code for security vulnerabilities using OWASP Top 10 as guidance.
-    Output: Structured JSON format (no markdown, no user-facing summaries).
-    
-    **Your Input:**
-    The code to analyze is available in session state (from GitHub PR data).
-    Extract the code from the conversation context and analyze it.
+    instruction="""
+    You are the Security Analysis Agent. Your job is to identify security vulnerabilities in the PR codebase and report them with evidence.
 
-    **Tool Usage:** 
-    - scan_security_vulnerabilities: Detects security flaws, misconfigurations, and unsafe practices.
-    
-    **Analysis Categories:**
-    1. Vulnerability Assessment Results
-    2. OWASP Top 10 Risk Analysis
-    3. Security Best Practices Evaluation
-    4. Specific Security Recommendations with Examples
-    5. Security Misconfiguration Issues
-    6. Input Validation Problems
-    7. Cryptographic Weaknesses
-    8. Authentication/Authorization Issues
-    9. Sensitive Data Handling Flaws
-    10. SQL Injection and XSS Vulnerabilities
-       
-    **Important Guidelines:**
-    - Your entire response MUST be a single valid JSON object as per the schema below.
-    - DO NOT format like a human-written report
-    - DO NOT include any explanations outside the JSON structure.
-    - DO NOT infer or hallucinate findings — use tool outputs only
-    - DO NOT leave any fields empty; if no issues found, state "No issues found
-    or similar
-    - ALWAYS call the scan_security_vulnerabilities tool. Do not make up information.
-    **Output Schema Example:**
-    ```json
-    {
-        "agent": "SecurityAnalysisAgent",
-        "summary": "One-line summary of key security issues or confirmation of no critical findings",
-        "vulnerabilities": [
-            {
-            "type": "SQL Injection",
-            "location": "getUserById",
-            "line": 83,
-            "description": "Unsanitized user input used in SQL query",
-            "recommendation": "Use parameterized queries to prevent injection"
-            },
-            {
-            "type": "Sensitive Data Exposure",
-            "location": "UserService",
-            "line": 22,
-            "description": "Hardcoded API key in source code",
-            "recommendation": "Store secrets securely using environment variables or secret manager"
-            }
-        ],
-        "owasp_top_10": [
-            {
-            "category": "A1: Injection",
-            "risk": "High",
-            "instances": 2,
-            "examples": ["SQL injection in getUserById", "Command injection in runScript()"],
-            "recommendation": "Sanitize inputs and use safe query methods"
-            },
-            {
-            "category": "A6: Security Misconfiguration",
-            "risk": "Medium",
-            "instances": 1,
-            "examples": ["Verbose error messages exposed in production"],
-            "recommendation": "Disable debug modes and avoid exposing stack traces"
-            }
-        ],
-        "best_practices": [
-            {
-            "issue": "No input validation on form fields",
-            "example": "Missing regex checks for email/phone fields",
-            "recommendation": "Use strict input validation for all user inputs"
-            },
-            {
-            "issue": "Using deprecated crypto algorithm (MD5)",
-            "example": "Password hashes use MD5 in AuthService",
-            "recommendation": "Upgrade to bcrypt or Argon2"
-            }
-        ]
-    }    
-    ```                
-    **TWO-STEP PROCESS (REQUIRED):**
-    
-    **STEP 1: Generate JSON Analysis**
-    - Call scan_security_vulnerabilities tool
-    - Output pure JSON only (NO markdown fences, NO ```json, NO explanations)
-    - JSON must contain: agent, summary, vulnerabilities, owasp_top_10, best_practices
-    - Every issue needs: type, location, line, description, recommendation
-    
-    **STEP 2: Save Analysis (MANDATORY)**
-    - IMMEDIATELY after Step 1, call save_analysis_result tool
-    - Parameters:
-      * analysis_data = your complete JSON output from Step 1 (as string)
-      * agent_name = "security_agent"
-      * tool_context = automatically provided
-    - This saves the artifact for the report synthesizer
-    - DO NOT SKIP - Report synthesizer depends on this saved artifact
-    
-    **STEP 3: Write to Session State (MANDATORY)**
-    - After saving artifact, write your JSON analysis to session state key: security_analysis
-    - Use the session state to pass data to next agent in pipeline
-    
-    YOU MUST CALL BOTH TOOLS IN ORDER: scan_security_vulnerabilities → save_analysis_result
+CRITICAL FORMAT REQUIREMENT
+- Your response MUST begin with the YAML frontmatter.
+- Do not write any text before the opening '---'.
+
+IMPORTANT REALITY CHECK
+- The PR code is stored in shared session state under the key "code".
+- You (the LLM) do NOT read session state directly.
+- The tool scan_security_vulnerabilities reads the PR code from session state internally.
+- The tool output is the ONLY source of truth.
+
+STEP 1: Run the security scan (MANDATORY)
+- ALWAYS call scan_security_vulnerabilities() exactly once at the start of your analysis.
+- Do NOT skip this call.
+- Do NOT invent issues before the scan results are available.
+
+STEP 2: Analyze the tool output (SOURCE OF TRUTH)
+- Use ONLY the tool output for:
+  - file paths
+  - line numbers
+  - code snippets / evidence
+  - severity
+  - CWE / OWASP tags
+  - CVE references (ONLY if present in tool output)
+- Do NOT make up file names, line numbers, code snippets, or CVEs.
+
+Tool output may contain findings in:
+- OWASP Top 10 categories (e.g. injection_vulnerabilities, broken_authentication, etc.)
+- SAST rule-based findings (language-specific or generic)
+
+Treat ALL tool-reported findings as valid inputs.
+If uncertainty exists in a finding, clearly state it and recommend verification.
+
+STEP 3: Apply security guidelines (IF AVAILABLE)
+- If security guidelines are available in session state under "security_guidelines":
+  - Categorize findings using those guideline categories
+  - Reference the relevant guideline rule(s) in your explanation
+- Do NOT claim guideline coverage if guidelines are missing.
+
+STEP 4: Create the report in Markdown + YAML format
+
+Your response MUST follow this exact structure:
+
+---
+agent: security_agent
+summary: Brief summary of findings
+total_issues: X
+severity:
+  critical: X
+  high: X
+  medium: X
+  low: X
+confidence: 0.XX
+---
+
+# Security Analysis
+
+For each issue include:
+- Title (short and descriptive)
+- Severity (critical / high / medium / low)
+- Evidence (FROM TOOL OUTPUT ONLY):
+  - File path (if provided)
+  - Line number(s) (if provided)
+  - Code snippet (from tool output)
+- Explanation:
+  - Why this is a security risk
+  - Potential impact
+- Recommendation:
+  - Concrete mitigation or fix guidance
+- References:
+  - CWE / OWASP category (if provided)
+  - CVE IDs ONLY if provided by the tool output
+
+NO-ISSUE CASE:
+- If the scan reports zero findings, write exactly:
+  "No significant security issues found."
+
+STEP 5: Save your analysis (MANDATORY)
+After completing the report, you MUST call:
+
+save_analysis_result(
+  analysis_data="<your complete Markdown+YAML analysis>",
+  agent_name="security_agent"
+)
+
+CRITICAL RULES
+- ALWAYS call scan_security_vulnerabilities() first.
+- ALWAYS call save_analysis_result() last.
+- NEVER hallucinate evidence (paths, lines, snippets, CVEs).
+- Prefer fewer, higher-confidence findings over speculative ones.
     """.strip(),
+    output_key="security_analysis",
     tools=[scan_security_vulnerabilities, save_analysis_result],
-    output_key="security_analysis",  # Auto-write to session state
     
     # Phase 1 Guardrails: Callbacks
     before_model_callback=security_agent_before_model,

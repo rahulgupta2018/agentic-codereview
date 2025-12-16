@@ -1,0 +1,127 @@
+version: "1.0"
+engine: "regex"
+language: "generic"
+title: "Generic SAST Rules"
+description: "Cross-language SAST rules (secrets, weak crypto patterns, risky configs)."
+
+rules:
+  - id: "GEN-SECRET-001"
+    enabled: true
+    title: "Hardcoded secret-like assignment"
+    description: "Detects likely hardcoded secrets (tokens/keys/passwords) in code/config."
+    category: "Secrets Management"
+    severity: "high"
+    confidence: 0.65
+    cwe: ["CWE-798"]
+    owasp_top_10_2021: ["a02_cryptographic_failures"]
+    tags: ["secrets", "credentials"]
+    detection:
+      file_globs:
+        - "**/*.*"
+        - "**/*.env"
+        - "**/*.yaml"
+        - "**/*.yml"
+        - "**/*.json"
+        - "**/*.toml"
+        - "**/*.ini"
+      patterns:
+        - name: "secret_assignment"
+          description: "key/value assignment with long-ish secret"
+          regex: "(?i)\\b(api[_-]?key|secret|token|password|passwd|private[_-]?key|access[_-]?key)\\b\\s*[:=]\\s*['\"][A-Za-z0-9_\\-\\+/=]{12,}['\"]"
+        - name: "bearer_token_literal"
+          description: "Bearer token literal in strings"
+          regex: "(?i)bearer\\s+[A-Za-z0-9_\\-\\+/=]{16,}"
+      allowlist_patterns:
+        - name: "placeholder_values"
+          regex: "(?i)(changeme|change_me|example|sample|placeholder|dummy|testtoken|notasecret)"
+        - name: "env_var_reference"
+          regex: "\\$\\{?[A-Z0-9_]+\\}?"
+    remediation:
+      recommendation: "Move secrets to environment variables or a secret manager; rotate any exposed credentials."
+      references:
+        - "Use a secret manager (e.g., GCP Secret Manager, AWS Secrets Manager, Vault)."
+
+  - id: "GEN-LOG-SECRET-001"
+    enabled: true
+    title: "Potential secret in logs"
+    description: "Detects logging of values that look like secrets/tokens."
+    category: "Error Handling & Logging"
+    severity: "high"
+    confidence: 0.55
+    cwe: ["CWE-532"]
+    owasp_top_10_2021: ["a02_cryptographic_failures"]
+    tags: ["logging", "secrets"]
+    detection:
+      file_globs: ["**/*.*"]
+      patterns:
+        - name: "log_token"
+          regex: "(?i)\\b(log|logger\\.|console\\.|print)\\w*\\(.*(token|secret|apikey|api_key|password|authorization).*\\)"
+      allowlist_patterns:
+        - name: "redaction_keywords"
+          regex: "(?i)(redact|masked|sanitize|scrub|hash|sha256)"
+    remediation:
+      recommendation: "Do not log secrets. Log only redacted identifiers or hashes, and scrub sensitive fields."
+
+  - id: "GEN-TLS-VERIFY-OFF-001"
+    enabled: true
+    title: "TLS certificate verification disabled"
+    description: "Detects patterns where TLS/SSL verification is explicitly disabled."
+    category: "Data Protection"
+    severity: "high"
+    confidence: 0.6
+    cwe: ["CWE-295"]
+    owasp_top_10_2021: ["a02_cryptographic_failures"]
+    tags: ["tls", "mitm"]
+    detection:
+      file_globs: ["**/*.*"]
+      patterns:
+        - name: "requests_verify_false"
+          regex: "(?i)verify\\s*=\\s*false"
+        - name: "node_reject_unauthorized_false"
+          regex: "(?i)rejectUnauthorized\\s*:\\s*false"
+        - name: "curl_insecure"
+          regex: "(?i)\\bcurl\\b.*\\s(-k|--insecure)\\b"
+    remediation:
+      recommendation: "Enable TLS verification. If using internal certs, install the CA bundle instead of disabling verification."
+
+  - id: "GEN-URL-CREDENTIALS-001"
+    enabled: true
+    title: "Credentials embedded in URL"
+    description: "Detects URLs containing user:pass@host patterns."
+    category: "Secrets Management"
+    severity: "high"
+    confidence: 0.7
+    cwe: ["CWE-312"]
+    tags: ["credentials", "url"]
+    detection:
+      file_globs: ["**/*.*"]
+      patterns:
+        - name: "basic_auth_in_url"
+          regex: "(?i)https?:\\/\\/[A-Za-z0-9_\\-\\.]+:[^@\\s\\/]+@"
+    remediation:
+      recommendation: "Remove credentials from URLs. Use headers (Authorization), env vars, or secret managers."
+
+  - id: "GEN-DANGEROUS-DESERIALIZE-001"
+    enabled: true
+    title: "Potential unsafe deserialization usage"
+    description: "Flags common deserialization calls that can be dangerous with untrusted input."
+    category: "Injection & Unsafe Calls"
+    severity: "high"
+    confidence: 0.45
+    cwe: ["CWE-502"]
+    owasp_top_10_2021: ["a08_software_and_data_integrity_failures"]
+    tags: ["deserialization"]
+    detection:
+      file_globs: ["**/*.*"]
+      patterns:
+        - name: "pickle_loads"
+          regex: "\\bpickle\\.(loads|load)\\("
+        - name: "yaml_unsafe_load"
+          regex: "\\byaml\\.load\\("
+        - name: "java_objectinputstream"
+          regex: "\\bObjectInputStream\\b"
+      allowlist_patterns:
+        - name: "safe_yaml_load"
+          regex: "\\byaml\\.safe_load\\("
+    remediation:
+      recommendation: "Avoid unsafe deserialization of untrusted data. Use safe formats/parsers and validate inputs."

@@ -39,8 +39,6 @@ from util.callbacks import (
     filter_bias,
     validate_metrics,
     execute_callback_safe,
-    parse_json_safe,
-    format_json_safe,
     get_config
 )
 from util.metrics import CallbackTimer, get_metrics_collector
@@ -168,62 +166,40 @@ def quality_agent_after_agent(callback_context):
                 logger.warning("⚠️ [code_quality_agent] No code_quality_analysis in state")
                 return None
             
-            # Parse JSON
-            analysis = parse_json_safe(text)
-            if not analysis:
-                logger.warning("⚠️ [code_quality_agent] after_agent: Could not parse JSON")
+            # Parse Markdown+YAML format
+            from util.markdown_yaml_parser import parse_analysis, validate_analysis, filter_content
+            
+            metadata, markdown_body = parse_analysis(text)
+            if not metadata:
+                logger.warning("⚠️ [code_quality_agent] after_agent: Could not parse Markdown+YAML")
                 return None
             
-            # Filter subjective language from all text fields
-            bias_filtered = 0
+            # Validate required fields
+            errors = validate_analysis(metadata, markdown_body, 'code_quality_agent')
+            if errors:
+                logger.warning(f"⚠️ [code_quality_agent] Validation errors: {errors}")
             
-            # Filter in complexity_analysis
-            if 'complexity_analysis' in analysis:
-                for detail in analysis['complexity_analysis'].get('details', []):
-                    if 'description' in detail:
-                        original = detail['description']
-                        filtered, count = filter_bias(original)
-                        if count > 0:
-                            detail['description'] = filtered
-                            bias_filtered += count
+            # Filter subjective/biased language from markdown body
+            bias_patterns = [
+                (r'\b(messy|ugly|bad|terrible|awful|horrible|stupid|dumb|idiot|lazy)\b', '[filtered]'),
+                (r'\b(crap|shit|sucks|garbage)\b', '[filtered]'),
+            ]
             
-            # Filter in code_quality_assessment
-            if 'code_quality_assessment' in analysis:
-                for issue in analysis['code_quality_assessment'].get('issues', []):
-                    if 'description' in issue:
-                        original = issue['description']
-                        filtered, count = filter_bias(original)
-                        if count > 0:
-                            issue['description'] = filtered
-                            bias_filtered += count
+            filtered_body, bias_filtered = filter_content(markdown_body, bias_patterns)
             
-            # Filter in best_practices_evaluation
-            if 'best_practices_evaluation' in analysis:
-                for violation in analysis['best_practices_evaluation'].get('violations', []):
-                    if 'description' in violation:
-                        original = violation['description']
-                        filtered, count = filter_bias(original)
-                        if count > 0:
-                            violation['description'] = filtered
-                            bias_filtered += count
-            
-            # Filter in recommendations
-            for rec in analysis.get('recommendations', []):
-                if 'description' in rec:
-                    original = rec['description']
-                    filtered, count = filter_bias(original)
-                    if count > 0:
-                        rec['description'] = filtered
-                        bias_filtered += count
+            if bias_filtered > 0:
+                logger.warning(f"🚫 [code_quality_agent] Filtered {bias_filtered} subjective/biased terms from analysis")
             
             timer.record_filtered('bias', bias_filtered)
             
-            # Validate metrics presence
-            is_valid, missing = validate_metrics(analysis)
-            if not is_valid:
-                logger.warning(f"⚠️ [code_quality_agent] Missing metrics: {len(missing)} issues")
+            # Validate metrics presence (check if complexity values mentioned in markdown)
+            import re
+            complexity_mentions = len(re.findall(r'Cyclomatic Complexity\s*[=:]\s*\d+', markdown_body))
             
-            logger.info(f"✅ [code_quality_agent] after_agent: Detected {bias_filtered} biased terms")
+            if complexity_mentions == 0:
+                logger.warning("⚠️ [code_quality_agent] No complexity metrics found in analysis")
+            
+            logger.info(f"✅ [code_quality_agent] after_agent: {complexity_mentions} complexity metrics, {bias_filtered} biased terms")
             
             return None  # Validation only, no content modification
         
@@ -246,16 +222,23 @@ code_quality_agent = Agent(
     instruction="""You are a Code Quality Analysis Agent in a sequential code review pipeline.
     
     Your job: Analyze code quality, maintainability, and technical debt.
-    Output: Structured JSON format (no markdown, no user-facing summaries).
+    Output: **Markdown with YAML frontmatter** (human-readable, structured metadata).
     
     **Your Input:**
-    The code to analyze is available in session state (from GitHub PR data).
-    Extract the code from the conversation context and analyze it.
+    The code files to analyze are in session state under the key 'code'.
+    The session state also contains:
+    - 'files': List of file metadata (file_path, language, lines, etc.)
+    - 'language': Primary language (or "multi" for multi-language PRs)
+    - 'file_count': Number of files in the PR
+    
+    **CRITICAL:** You MUST pass the 'code' from session state to each tool.
+    The code contains all PR files with headers like "File: path/to/file.py".
+    DO NOT make up file names or code - use only what's in the 'code' variable.
 
     **Tool Usage (MUST use all):**
-    1. analyze_code_complexity: Calculates cyclomatic complexity, nesting depth, structural metrics
-    2. analyze_static_code: Performs static analysis for quality and security issues
-    3. parse_code_ast: Analyzes AST for structure, patterns, maintainability issues
+    1. analyze_code_complexity(code=<code from session state>): Calculates cyclomatic complexity, nesting depth, structural metrics
+    2. analyze_static_code(code=<code from session state>): Performs static analysis for quality and security issues
+    3. parse_code_ast(code=<code from session state>): Analyzes AST for structure, patterns, maintainability issues
     
     **Analysis Focus:**
     - Code complexity & maintainability (cyclomatic complexity, nesting, large functions)
@@ -264,68 +247,168 @@ code_quality_agent = Agent(
     - Technical debt indicators (duplicated code, TODOs, commented logic, code smells)
     - Readability and documentation (docstrings, self-explanatory naming, comments)
     
-    **Report Sections:**
-    1. Complexity Analysis Results
-    2. Code Quality Assessment
-    3. Best Practices Evaluation
-    4. Specific Recommendations with Examples
-    
-    **Important:**
-    - Use tools to gather data - DO NOT fabricate or hallucinate information
-    - Focus on:
-    - Best practices compliance
-    - Code organization and structure
-    - Technical debt identification
-    - Readability and documentation quality
-    
-    IMPORTANT: You MUST call your analysis tools. Do not make up information.
-    
-    **Response Format (STRICT JSON Output):**
-    - You must NOT produce natural-language text.
-    - Your output must be valid JSON, capturing all findings from your tools.
-    - The JSON structure must strictly follow this schema:
-        {
-        "agent": "code_quality_agent",
-        "complexity_analysis": {
-            "summary": "",
-            "details": []
-        },
-        "code_quality_assessment": {
-            "summary": "",
-            "issues": []
-        },
-        "best_practices_evaluation": {
-            "summary": "",
-            "violations": []
-        },
-        "recommendations": []
-        }
-
-    **Final Hard Rule:**
-    - Your entire response MUST be a single valid JSON object as per the schema above.  
-    - DO NOT format like a human-written report
-    - DO NOT include any explanations outside the JSON structure.
-    - Failure to comply will result in rejection of your response.
+    **Important Guidelines:**
+    - Your entire response MUST be in Markdown + YAML frontmatter format
+    - START with YAML frontmatter (metadata between --- delimiters)
+    - FOLLOW with Markdown body (formatted analysis with headings, code blocks)
     - DO NOT infer or hallucinate findings — use tool outputs only
+    - ALWAYS call all analysis tools with code from session state
+    - DO NOT make up file names (auth/authentication.py, services/user_manager.py, etc.)
+    - ONLY reference files that appear in the 'code' variable you pass to the tools
+    - If you don't find real issues, report "No significant code quality issues found"
+    - DO NOT analyze metadata, reports, or artifacts - analyze SOURCE CODE only
+    - Include actual file names, line numbers, and code snippets from the PROVIDED code
+    - Every finding MUST have a confidence score (0.0-1.0)
+    - Use objective metrics (cyclomatic complexity values, line counts, etc.)
+    
+    **Output Format Example:**
+    ```
+    ---
+    agent: code_quality_agent
+    summary: Found 8 code quality issues across 3 files requiring attention
+    total_issues: 8
+    severity:
+      critical: 2
+      high: 3
+      medium: 3
+      low: 0
+    confidence: 0.92
+    metrics:
+      avg_cyclomatic_complexity: 12.5
+      max_cyclomatic_complexity: 28
+      functions_over_50_lines: 3
+      max_nesting_depth: 6
+    file_count: 3
+    ---
+
+    # Code Quality Analysis
+
+    ## Critical Issues
+
+    ### 1. High Cyclomatic Complexity in Authentication Function (Confidence: 0.95)
+    **Severity:** Critical  
+    **Location:** `validateUserLogin` function, lines 156-198  
+    **File:** `auth/authentication.py`  
+    **Measured Value:** Cyclomatic Complexity = 28 (threshold: 15)
+
+    **Issue Description:**
+    The `validateUserLogin` function has excessive branching logic with 28 decision points, making it difficult to test and maintain.
+
+    **Evidence:**
+    ```python
+    def validateUserLogin(username, password, session_id, ip_address):
+        if not username:
+            return False
+        if not password:
+            return False
+        if len(password) < 8:
+            return False
+        if session_id:
+            if is_expired(session_id):
+                if should_extend(session_id):
+                    extend_session(session_id)
+                else:
+                    invalidate_session(session_id)
+        # ... 15 more nested conditions ...
+    ```
+
+    **Recommendation:**
+    Refactor into smaller, focused functions using early returns and guard clauses.
+
+    **Refactored Example:**
+    ```python
+    def validateUserLogin(username, password, session_id, ip_address):
+        validate_credentials(username, password)
+        handle_session(session_id)
+        verify_ip_address(ip_address)
+        return authenticate_user(username, password)
+    
+    def validate_credentials(username, password):
+        if not username or not password:
+            raise ValueError("Missing credentials")
+        if len(password) < 8:
+            raise ValueError("Password too short")
+    ```
+
+    ---
+
+    ### 2. God Class Anti-Pattern (Confidence: 0.90)
+    **Severity:** Critical  
+    **Location:** `UserManager` class, lines 45-523  
+    **File:** `services/user_manager.py`  
+    **Measured Values:**
+    - 478 lines of code
+    - 32 methods
+    - Handles: authentication, authorization, profile management, notifications, logging
+
+    **Issue Description:**
+    The `UserManager` class violates Single Responsibility Principle by handling multiple unrelated concerns.
+
+    **Recommendation:**
+    Split into focused classes: `AuthenticationService`, `UserProfileService`, `NotificationService`.
+
+    ---
+
+    ## High Priority Issues
+
+    ### 3. Excessive Function Length (Confidence: 0.95)
+    **Severity:** High  
+    **Location:** `processPayment` function, lines 89-213  
+    **File:** `billing/payment_processor.py`  
+    **Measured Value:** 124 lines (threshold: 50)
+
+    **Issue Description:**
+    Function exceeds recommended length, making it hard to understand and maintain.
+
+    **Recommendation:**
+    Extract sub-operations: `validatePaymentInfo()`, `calculateTaxes()`, `processTransaction()`, `sendReceipt()`.
+
+    ---
+
+    ## Technical Debt Summary
+
+    | Category | Count | Examples |
+    |----------|-------|----------|
+    | High Complexity | 2 | validateUserLogin (CC=28), processOrder (CC=22) |
+    | Long Functions | 3 | processPayment (124 lines), generateReport (87 lines) |
+    | God Classes | 1 | UserManager (478 lines, 32 methods) |
+    | Deep Nesting | 2 | configParser (depth=6), dataValidator (depth=5) |
+
+    ## Overall Assessment
+
+    **Maintainability Index:** 58/100 (threshold: 65)  
+    **Average Cyclomatic Complexity:** 12.5 (threshold: 10)  
+    **Code Coverage:** Not analyzed (requires test execution)
+
+    ## Priority Recommendations
+
+    1. **Immediate:** Refactor `validateUserLogin` (CC=28)
+    2. **High:** Split `UserManager` god class
+    3. **Medium:** Shorten `processPayment` function (124 lines)
+    ```
+                
     **TWO-STEP PROCESS (REQUIRED):**
     
-    **STEP 1: Generate JSON Analysis**
+    **STEP 1: Generate Markdown+YAML Analysis**
     - Call all tools: analyze_code_complexity, analyze_static_code, parse_code_ast
-    - Output pure JSON only (NO markdown fences, NO ```json, NO explanations)
-    - JSON must contain: agent, summary, complexity_analysis, code_quality_assessment, recommendations
-    - Must be a single valid JSON object
+    - Output Markdown with YAML frontmatter (see format above)
+    - Start with --- YAML metadata ---
+    - Follow with # Markdown sections
+    - Include confidence scores for each finding
+    - Reference actual files and line numbers from the provided code
+    - Use objective metrics (actual complexity values, line counts)
     
     **STEP 2: Save Analysis (MANDATORY)**
     - IMMEDIATELY after Step 1, call save_analysis_result tool
     - Parameters:
-      * analysis_data = your complete JSON output from Step 1 (as string)
+      * analysis_data = your complete Markdown+YAML output from Step 1 (as string)
       * agent_name = "code_quality_agent"
       * tool_context = automatically provided
     - This saves the artifact for the report synthesizer
     - DO NOT SKIP - Report synthesizer depends on this saved artifact
     
     **STEP 3: Write to Session State (MANDATORY)**
-    - After saving artifact, write your JSON analysis to session state key: code_quality_analysis
+    - After saving artifact, write your Markdown+YAML analysis to session state key: code_quality_analysis
     - Use the session state to pass data to next agent in pipeline
     
     YOU MUST CALL save_analysis_result AFTER GENERATING YOUR ANALYSIS

@@ -23,11 +23,13 @@ async def load_analysis_results_from_artifacts(
     This tool loads analysis artifacts saved by analysis agents from
     storage_bucket/artifacts/<session_id>/ directory structure.
     
+    Files are now in Markdown+YAML format (not JSON).
+    
     Expected file structure:
-        storage_bucket/artifacts/<session_id>/security_agent_analysis.json
-        storage_bucket/artifacts/<session_id>/code_quality_agent_analysis.json
-        storage_bucket/artifacts/<session_id>/engineering_practices_agent_analysis.json
-        storage_bucket/artifacts/<session_id>/carbon_emission_agent_analysis.json
+        storage_bucket/artifacts/<session_id>/security_agent_analysis.md
+        storage_bucket/artifacts/<session_id>/code_quality_agent_analysis.md
+        storage_bucket/artifacts/<session_id>/engineering_practices_agent_analysis.md
+        storage_bucket/artifacts/<session_id>/carbon_emission_agent_analysis.md
     
     Args:
         tool_context: ADK tool context (provides session_id)
@@ -37,10 +39,9 @@ async def load_analysis_results_from_artifacts(
         {
             "session_id": "e735b7b0-ea36-49ee-96c1-ef671f4d1594",
             "results": {
-                "security_agent": {...},
-                "code_quality_agent": {...},
-                "engineering_practices_agent": {...},
-                "carbon_emission_agent": {...}
+                "security_agent": "---\\nagent: security_agent\\n...\\n# Analysis...",
+                "code_quality_agent": "---\\nagent: code_quality_agent...",
+                ...
             },
             "agents_found": ["security_agent", "code_quality_agent", ...],
             "total_agents": 2
@@ -68,8 +69,8 @@ async def load_analysis_results_from_artifacts(
         }
     
     try:
-        # Find all *_analysis.json files in session directory
-        analysis_files = list(session_artifacts_dir.glob("*_analysis.json"))
+        # Find all *_analysis.md files in session directory
+        analysis_files = list(session_artifacts_dir.glob("*_analysis.md"))
         
         if not analysis_files:
             logger.info(f"No analysis files found in {session_artifacts_dir}")
@@ -88,19 +89,18 @@ async def load_analysis_results_from_artifacts(
         agents_found = []
         
         for file_path in analysis_files:
-            # Extract agent name from filename: <agent_name>_analysis.json
+            # Extract agent name from filename: <agent_name>_analysis.md
             agent_name = file_path.stem.replace('_analysis', '')
             
             try:
                 with open(file_path, 'r', encoding='utf-8') as f:
-                    agent_result = json.load(f)
+                    # Read as text (Markdown+YAML format, not JSON)
+                    agent_result = f.read()
                 
                 results[agent_name] = agent_result
                 agents_found.append(agent_name)
                 logger.info(f"  ✓ Loaded {agent_name} results ({file_path.stat().st_size} bytes)")
                 
-            except json.JSONDecodeError as e:
-                logger.error(f"  ✗ Failed to parse JSON from {file_path.name}: {e}")
             except Exception as e:
                 logger.error(f"  ✗ Error reading {file_path.name}: {e}")
         

@@ -1,0 +1,223 @@
+version: "1.0"
+engine: "regex"
+language: "python"
+title: "Python SAST Rules"
+description: "Regex-based SAST rules for Python projects."
+
+rules:
+  - id: "PY-INJECT-EXEC-001"
+    enabled: true
+    title: "Use of eval/exec"
+    description: "Flags eval/exec which can lead to code injection if used with untrusted input."
+    category: "Injection & Unsafe Calls"
+    severity: "high"
+    confidence: 0.7
+    cwe: ["CWE-94"]
+    owasp_top_10_2021: ["a03_injection"]
+    tags: ["code_injection"]
+    detection:
+      file_globs: ["**/*.py"]
+      patterns:
+        - name: "eval_call"
+          regex: "\\beval\\s*\\("
+        - name: "exec_call"
+          regex: "\\bexec\\s*\\("
+    remediation:
+      recommendation: "Avoid eval/exec on untrusted input. Use safe parsers or explicit logic."
+
+  - id: "PY-SQLI-001"
+    enabled: true
+    title: "Possible SQL injection via string interpolation/concatenation"
+    description: "Detects SQL built dynamically and passed to execute()."
+    category: "Injection & Unsafe Calls"
+    severity: "high"
+    confidence: 0.75
+    cwe: ["CWE-89"]
+    owasp_top_10_2021: ["a03_injection"]
+    tags: ["sqli"]
+    detection:
+      file_globs: ["**/*.py"]
+      patterns:
+        - name: "execute_fstring"
+          regex: "\\.execute\\(\\s*f[\"'].*\\b(SELECT|INSERT|UPDATE|DELETE)\\b"
+        - name: "execute_format"
+          regex: "\\.execute\\(\\s*[\"'].*\\b(SELECT|INSERT|UPDATE|DELETE)\\b.*\\.format\\("
+        - name: "execute_concat"
+          regex: "\\.execute\\(.*\\+.*\\)"
+      allowlist_patterns:
+        - name: "paramstyle_psycopg2"
+          regex: "\\.execute\\(\\s*[\"'].*%s.*[\"']\\s*,\\s*\\("
+        - name: "paramstyle_qmark"
+          regex: "\\.execute\\(\\s*[\"'].*\\?.*[\"']\\s*,\\s*\\("
+        - name: "sqlalchemy_text_params"
+          regex: "\\btext\\(.*:\\w+"
+    remediation:
+      recommendation: "Use parameterized queries (pass parameters separately). Avoid building SQL strings with untrusted input."
+      examples:
+        - bad: "cursor.execute(f\"SELECT * FROM users WHERE id={user_id}\")"
+          good: "cursor.execute(\"SELECT * FROM users WHERE id=%s\", (user_id,))"
+
+  - id: "PY-CMDI-001"
+    enabled: true
+    title: "Possible command injection via shell=True or string command"
+    description: "Flags subprocess calls that may allow command injection if input is untrusted."
+    category: "Injection & Unsafe Calls"
+    severity: "high"
+    confidence: 0.7
+    cwe: ["CWE-78"]
+    owasp_top_10_2021: ["a03_injection"]
+    tags: ["command_injection"]
+    detection:
+      file_globs: ["**/*.py"]
+      patterns:
+        - name: "subprocess_shell_true"
+          regex: "\\bsubprocess\\.(run|Popen|call|check_output|check_call)\\(.*shell\\s*=\\s*True"
+        - name: "os_system"
+          regex: "\\bos\\.system\\s*\\("
+        - name: "os_popen"
+          regex: "\\bos\\.popen\\s*\\("
+      allowlist_patterns:
+        - name: "shell_false"
+          regex: "shell\\s*=\\s*False"
+    remediation:
+      recommendation: "Avoid shell=True. Pass command as a list and validate/escape untrusted inputs."
+
+  - id: "PY-SSRF-001"
+    enabled: true
+    title: "Possible SSRF via unvalidated URL fetch"
+    description: "Flags requests/urllib usage where URL may be user-controlled."
+    category: "Input Validation & Sanitization"
+    severity: "medium"
+    confidence: 0.5
+    cwe: ["CWE-918"]
+    owasp_top_10_2021: ["a10_ssrf"]
+    tags: ["ssrf"]
+    detection:
+      file_globs: ["**/*.py"]
+      patterns:
+        - name: "requests_get_var"
+          regex: "\\brequests\\.(get|post|put|delete|head|options)\\(\\s*\\w+\\s*[,\\)]"
+        - name: "urllib_urlopen_var"
+          regex: "\\burllib\\.request\\.urlopen\\(\\s*\\w+\\s*[,\\)]"
+    remediation:
+      recommendation: "Validate/allowlist destination hosts. Block link-local/metadata IPs. Use timeouts."
+
+  - id: "PY-PATH-TRAVERSAL-001"
+    enabled: true
+    title: "Possible path traversal via untrusted path join"
+    description: "Flags file open/join patterns that may allow traversal if path includes '..' or is user-controlled."
+    category: "Input Validation & Sanitization"
+    severity: "high"
+    confidence: 0.55
+    cwe: ["CWE-22"]
+    owasp_top_10_2021: ["a01_broken_access_control"]
+    tags: ["path_traversal"]
+    detection:
+      file_globs: ["**/*.py"]
+      patterns:
+        - name: "open_var"
+          regex: "\\bopen\\(\\s*\\w+\\s*[,\\)]"
+        - name: "path_join_var"
+          regex: "\\bos\\.path\\.join\\(.*\\w+.*\\)"
+        - name: "pathlib_joinpath"
+          regex: "\\bPath\\(.*\\)\\s*/\\s*\\w+"
+    remediation:
+      recommendation: "Normalize and validate paths. Use allowlists and prevent '..' traversal. Resolve against a safe base dir."
+
+  - id: "PY-XSS-001"
+    enabled: true
+    title: "Possible XSS via unsafe HTML construction"
+    description: "Flags direct HTML string building with variables (framework-dependent)."
+    category: "Injection & Unsafe Calls"
+    severity: "medium"
+    confidence: 0.45
+    cwe: ["CWE-79"]
+    owasp_top_10_2021: ["a03_injection"]
+    tags: ["xss"]
+    detection:
+      file_globs: ["**/*.py"]
+      patterns:
+        - name: "format_html_like"
+          regex: "(?i)(mark_safe|Markup)\\("
+        - name: "html_concat"
+          regex: "[\"']<[^>]+>.*\\+\\s*\\w+"
+    remediation:
+      recommendation: "Use template engines with auto-escaping. Avoid marking user-controlled content as safe."
+
+  - id: "PY-YAML-UNSAFE-LOAD-001"
+    enabled: true
+    title: "Unsafe YAML load"
+    description: "yaml.load can execute arbitrary constructors unless SafeLoader is used."
+    category: "Injection & Unsafe Calls"
+    severity: "high"
+    confidence: 0.8
+    cwe: ["CWE-502"]
+    tags: ["yaml", "deserialization"]
+    detection:
+      file_globs: ["**/*.py"]
+      patterns:
+        - name: "yaml_load"
+          regex: "\\byaml\\.load\\("
+      allowlist_patterns:
+        - name: "safe_load"
+          regex: "\\byaml\\.safe_load\\("
+        - name: "explicit_safe_loader"
+          regex: "Loader\\s*=\\s*yaml\\.SafeLoader"
+    remediation:
+      recommendation: "Use yaml.safe_load or SafeLoader when parsing untrusted YAML."
+
+  - id: "PY-WEAK-RANDOM-001"
+    enabled: true
+    title: "Weak randomness for security-sensitive use"
+    description: "random module is not suitable for secrets/tokens."
+    category: "Cryptography & Randomness"
+    severity: "medium"
+    confidence: 0.6
+    cwe: ["CWE-338"]
+    owasp_top_10_2021: ["a02_cryptographic_failures"]
+    tags: ["crypto", "random"]
+    detection:
+      file_globs: ["**/*.py"]
+      patterns:
+        - name: "random_choice"
+          regex: "\\brandom\\.(choice|randint|randrange|random)\\("
+    remediation:
+      recommendation: "Use secrets module for tokens/IDs: secrets.token_urlsafe(), secrets.choice()."
+
+  - id: "PY-FLASK-DEBUG-001"
+    enabled: true
+    title: "Flask debug mode enabled"
+    description: "Flask debug mode can expose interactive debugger in production."
+    category: "Error Handling & Logging"
+    severity: "high"
+    confidence: 0.75
+    cwe: ["CWE-489"]
+    tags: ["flask"]
+    detection:
+      file_globs: ["**/*.py"]
+      patterns:
+        - name: "flask_run_debug_true"
+          regex: "\\.run\\(.*debug\\s*=\\s*True"
+        - name: "flask_app_debug_true"
+          regex: "\\bapp\\.debug\\s*=\\s*True"
+    remediation:
+      recommendation: "Never enable debug=True in production. Use proper WSGI server and environment-based config."
+
+  - id: "PY-REQUESTS-NO-TIMEOUT-001"
+    enabled: true
+    title: "Network request without timeout"
+    description: "requests calls without timeout can hang and enable resource exhaustion."
+    category: "Reliability & DoS"
+    severity: "low"
+    confidence: 0.5
+    tags: ["dos", "timeouts"]
+    detection:
+      file_globs: ["**/*.py"]
+      patterns:
+        - name: "requests_call_no_timeout"
+          regex: "\\brequests\\.(get|post|put|delete|head|options)\\(.*\\)"
+      allowlist_patterns:
+        - name: "timeout_present"
+          regex: "timeout\\s*="
+    remediation:
+      recommendation: "Set explicit timeouts on outbound requests (e.g., timeout=(3.05, 10))."

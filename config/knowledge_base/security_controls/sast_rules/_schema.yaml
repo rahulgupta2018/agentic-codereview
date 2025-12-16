@@ -1,0 +1,94 @@
+version: "1.0"
+title: "SAST Rules Schema"
+description: >
+  Schema definition for regex-based SAST rules consumed by the security scanner.
+  This schema is intentionally MVP-friendly (regex + simple metadata), but supports
+  future extension to AST and taint analysis.
+
+engine: "regex"
+
+required_top_level_fields:
+  - version
+  - engine
+  - language
+  - rules
+
+rule_object:
+  required_fields:
+    - id
+    - title
+    - description
+    - category
+    - severity
+    - confidence
+    - detection
+    - remediation
+  optional_fields:
+    - tags
+    - cwe
+    - owasp_top_10_2021
+    - references
+    - enabled
+    - tuning
+    - fingerprint
+
+severity_enum: ["critical", "high", "medium", "low", "info"]
+
+confidence_range: [0.0, 1.0]
+
+detection_object:
+  required_fields:
+    - file_globs
+    - patterns
+  optional_fields:
+    - allowlist_patterns
+    - denylist_patterns
+    - context
+    - max_matches_per_file
+
+pattern_object:
+  required_fields:
+    - name
+    - regex
+  optional_fields:
+    - flags
+    - description
+    - capture_groups
+
+tuning_object:
+  optional_fields:
+    - max_findings
+    - max_file_size_kb
+    - ignore_paths
+    - ignore_globs
+
+fingerprint_object:
+  description: >
+    Used to compute stable finding fingerprints. If omitted, scanner may derive
+    fingerprint from (rule_id + file_path + line + snippet hash).
+  optional_fields:
+    - fields
+
+remediation_object:
+  required_fields:
+    - recommendation
+  optional_fields:
+    - examples
+    - references
+
+example_rule_minimal:
+  id: "PY-EXAMPLE-001"
+  title: "Example rule"
+  description: "Detects something insecure."
+  category: "Injection & Unsafe Calls"
+  severity: "high"
+  confidence: 0.7
+  cwe: ["CWE-000"]
+  owasp_top_10_2021: ["a03_injection"]
+  detection:
+    file_globs: ["**/*.py"]
+    patterns:
+      - name: "example_pattern"
+        regex: "eval\\("
+  remediation:
+    recommendation: "Avoid eval on untrusted input."

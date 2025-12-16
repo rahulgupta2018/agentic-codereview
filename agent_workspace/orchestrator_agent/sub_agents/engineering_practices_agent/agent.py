@@ -35,9 +35,7 @@ from tools.save_analysis_artifact import save_analysis_result
 # Import callback utilities
 from util.callbacks import (
     filter_bias,
-    execute_callback_safe,
-    parse_json_safe,
-    format_json_safe
+    execute_callback_safe
 )
 from util.metrics import CallbackTimer, get_metrics_collector
 
@@ -111,13 +109,20 @@ def engineering_agent_after_agent(callback_context):
                 logger.warning("⚠️ [engineering_practices_agent] No analysis in state")
                 return None
             
-            # Parse JSON
-            analysis = parse_json_safe(text)
-            if not analysis:
-                logger.warning("⚠️ [engineering_practices_agent] after_agent: Could not parse JSON")
+            # Parse Markdown+YAML format
+            from util.markdown_yaml_parser import parse_analysis, validate_analysis, filter_content
+            
+            metadata, markdown_body = parse_analysis(text)
+            if not metadata:
+                logger.warning("⚠️ [engineering_practices_agent] after_agent: Could not parse Markdown+YAML")
                 return None
             
-            # Check for dogmatic recommendations
+            # Validate required fields
+            errors = validate_analysis(metadata, markdown_body, 'engineering_practices_agent')
+            if errors:
+                logger.warning(f"⚠️ [engineering_practices_agent] Validation errors: {errors}")
+            
+            # Check for dogmatic recommendations in markdown body
             dogma_patterns = [
                 (r'\bmust use microservices\b', 'consider using microservices'),
                 (r'\balways use\b', 'typically use'),
@@ -127,47 +132,23 @@ def engineering_agent_after_agent(callback_context):
                 (r'\bmust follow\b', 'should follow'),
             ]
             
-            dogma_filtered = 0
+            filtered_body, dogma_filtered = filter_content(markdown_body, dogma_patterns)
             
-            # Filter recommendations
-            for recommendation in analysis.get('recommendations', []):
-                if 'description' in recommendation:
-                    desc = recommendation['description']
-                    original_desc = desc
-                    
-                    for pattern, replacement in dogma_patterns:
-                        desc = re.sub(pattern, replacement, desc, flags=re.IGNORECASE)
-                    
-                    if desc != original_desc:
-                        recommendation['description'] = desc
-                        dogma_filtered += 1
-                        logger.debug(f"🔄 Softened dogmatic recommendation")
-            
-            # Filter in design_principles_assessment
-            if 'design_principles_assessment' in analysis:
-                for item in analysis['design_principles_assessment']:
-                    if isinstance(item, dict) and 'recommendation' in item:
-                        rec = item['recommendation']
-                        original = rec
-                        
-                        for pattern, replacement in dogma_patterns:
-                            rec = re.sub(pattern, replacement, rec, flags=re.IGNORECASE)
-                        
-                        if rec != original:
-                            item['recommendation'] = rec
-                            dogma_filtered += 1
+            if dogma_filtered > 0:
+                logger.warning(f"🚫 [engineering_practices_agent] Detected {dogma_filtered} dogmatic recommendations")
             
             timer.record_filtered('dogma', dogma_filtered)
             
             # Filter bias/profanity
-            bias_filtered = 0
-            for rec in analysis.get('recommendations', []):
-                if 'description' in rec:
-                    original = rec['description']
-                    filtered, count = filter_bias(original)
-                    if count > 0:
-                        rec['description'] = filtered
-                        bias_filtered += count
+            bias_patterns = [
+                (r'\b(stupid|dumb|idiot|lazy|incompetent)\b', '[filtered]'),
+                (r'\b(crap|shit|sucks)\b', '[filtered]'),
+            ]
+            
+            filtered_body, bias_filtered = filter_content(filtered_body, bias_patterns)
+            
+            if bias_filtered > 0:
+                logger.warning(f"🚫 [engineering_practices_agent] Filtered {bias_filtered} biased terms")
             
             timer.record_filtered('bias', bias_filtered)
             
@@ -190,125 +171,56 @@ engineering_practices_agent = Agent(
     name="engineering_practices_agent",
     model=agent_model,
     description="Evaluates software engineering best practices and development workflows",
-    instruction="""You are an Engineering Practices Analysis Agent in a sequential code review pipeline.
-    
-    Your job: Evaluate engineering best practices, design principles, and development workflows.
-    Output: Structured JSON format (no markdown, no user-facing summaries).
-    
-    **Your Input:**
-    The code to analyze is available in session state (from GitHub PR data).
-    Extract the code from the conversation context and analyze it.
-    
-    **Tool Usage:**
-    - evaluate_engineering_practices: Assesses adherence to engineering best practices
+    instruction="""
+    You are the Engineering Practices Analysis Agent in a sequential code review pipeline.
 
-    **Analysis Focus:**
-    - SOLID principles and design patterns adherence
-    - Code organization and project structure
-    - Documentation and code comments quality
-    - Testing strategy and coverage indicators
-    - Dependency management practices
-    - Error handling and logging practices
-    
-    **Report Sections:**
-    1. Design Principles Assessment
-    2. Code Organization Evaluation
-    3. Documentation Quality Analysis
-    4. Best Practices Compliance
-    5. Specific Engineering Recommendations with Examples
-    
-    **Important:**
-    - Use tool to gather data - DO NOT fabricate or hallucinate information
-    - Provide actionable recommendations based on established engineering standards
-    
-    **Important Guidelines:**
-    - Ensure your analysis is objective and based on established engineering standards.
-    - Provide actionable recommendations that can be realistically implemented by the development team.
-    - Use examples from the codebase to illustrate points where applicable.
-    - Return only structured JSON as defined below — no freeform text, no markdown.
-    - Your output JSON must include the following keys:
-        - design_principles_assessment
-        - code_organization_evaluation
-        - documentation_quality_analysis
-        - best_practices_compliance
-        - specific_engineering_recommendations
-    
-    **Output JSON Structure Example:**
-    {
-        "agent": "EngineeringPracticesAgent",
-        "summary": "One-line summary of findings",
-        "design_principles": [
-            {
-            "principle": "Single Responsibility Principle",
-            "status": "violated",
-            "example": "Class `OrderProcessor` handles both validation and persistence",
-            "line": 12,
-            "recommendation": "Separate validation into a dedicated class"
-            }
-        ],
-        "code_organization": [
-            {
-            "issue": "Mixed UI and business logic in same module",
-            "example": "Component `CheckoutView` includes price calculation logic",
-            "line": 89,
-            "recommendation": "Extract logic into service layer"
-            }
-        ],
-        "documentation": [
-            {
-            "element": "function",
-            "issue": "Missing docstring",
-            "location": "calculatePremium",
-            "line": 24,
-            "recommendation": "Add a descriptive docstring with input/output explanation"
-            }
-        ],
-        "testing": [
-            {
-            "observation": "No unit tests found for core modules",
-            "impact": "Low confidence in change safety",
-            "recommendation": "Add tests for `PricingService`, `ValidationUtils`"
-            }
-        ],
-        "dependencies": [
-            {
-            "issue": "Tightly coupled to 3rd-party logging lib",
-            "example": "Direct calls to `LoggerLib.log()` throughout",
-            "recommendation": "Abstract via interface for easier swapping/mocking"
-            }
-        ],
-        "error_handling": [
-            {
-            "pattern": "Broad exception catch",
-            "example": "catch(Exception e)",
-            "line": 152,
-            "recommendation": "Catch specific exceptions and log detailed context"
-            }
-        ]
-    }                   
-    
-    **TWO-STEP PROCESS (REQUIRED):**
-    
-    **STEP 1: Generate JSON Analysis**
-    - Call evaluate_engineering_practices tool
-    - Output pure JSON only (NO markdown fences, NO ```json, NO explanations)
-    - JSON must contain: agent, summary, design_principles, code_organization, documentation_quality, recommendations
-    - Must be a single valid JSON object
-    
-    **STEP 2: Save Analysis (MANDATORY)**
-    - IMMEDIATELY after Step 1, call save_analysis_result tool
-    - Parameters:
-      * analysis_data = your complete JSON output from Step 1 (as string)
-      * agent_name = "engineering_practices_agent"
-      * tool_context = automatically provided
-    - This saves the artifact for the report synthesizer
-    - DO NOT SKIP - Report synthesizer depends on this saved artifact
-    
-    **STEP 3: Write to Session State (MANDATORY)**
-    - After saving artifact, write your JSON analysis to session state key: engineering_practices_analysis
-    - Use the session state to pass data to next agent in pipeline
-    
-    YOU MUST CALL BOTH TOOLS IN ORDER: evaluate_engineering_practices → save_analysis_result
+Your job:
+- Evaluate engineering best practices, design principles, maintainability, developer workflows.
+- Focus on practical, context-aware recommendations (avoid dogma).
+
+IMPORTANT REALITY CHECK:
+- The PR code is stored in shared session state under the key "code".
+- You (the LLM) do NOT read session state directly.
+- The tool evaluate_engineering_practices reads the PR code from session state internally.
+
+STEP 1: Run evaluation (mandatory)
+- ALWAYS call evaluate_engineering_practices() exactly once at the start.
+- Do not invent issues before tool results exist.
+
+STEP 2: Use tool output as source of truth
+- Use only the tool output and code evidence it provides.
+- Do NOT invent file paths, line numbers, or snippets.
+- If the tool output is uncertain or missing evidence, say so and recommend verification.
+
+STEP 3: Output format (required)
+Output Markdown with YAML frontmatter exactly:
+
+---
+agent: engineering_practices_agent
+summary: Brief summary of findings
+total_issues: X
+severity:
+  critical: X
+  high: X
+  medium: X
+  low: X
+confidence: 0.XX
+---
+
+# Engineering Practices Analysis
+
+For each issue include:
+- Title + confidence (0.0–1.0)
+- Severity (critical/high/medium/low)
+- Evidence:
+  - File path
+  - Line number(s) if available
+  - Code snippet (only if provided)
+- Why it matters (maintainability/reliability/team velocity)
+- Practical recommendation and trade-offs (avoid absolutist language)
+
+NO-ISSUE CASE:
+- If no issues found, say exactly: "No significant issues found."
     """.strip(),
     tools=[evaluate_engineering_practices, save_analysis_result],
     output_key="engineering_practices_analysis",  # Auto-write to session state
