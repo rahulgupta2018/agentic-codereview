@@ -66,14 +66,14 @@ def parse_analysis(text: str) -> Tuple[Dict[str, Any], str]:
         - If YAML fails to parse, returns metadata with parse_error and best-effort body.
     """
     if text is None:
-        logger.warning("⚠️ parse_analysis called with None text")
+        logger.debug("parse_analysis called with None text")
         return {"agent": "unknown", "parse_warning": "none_text"}, ""
 
     raw = text.strip("\ufeff")  # strip BOM if present
     m = _FRONTMATTER_RE.match(raw)
 
     if not m:
-        logger.warning("⚠️ No YAML frontmatter found (missing proper --- blocks at top)")
+        logger.info("ℹ️  No YAML frontmatter found (optional metadata, parser will use markdown body)")
         return {"agent": "unknown", "parse_warning": "no_frontmatter"}, raw.strip()
 
     yaml_block = m.group("yaml")
@@ -82,11 +82,11 @@ def parse_analysis(text: str) -> Tuple[Dict[str, Any], str]:
     try:
         metadata = yaml.safe_load(yaml_block) or {}
         if not isinstance(metadata, dict):
-            logger.warning("YAML frontmatter is not a dict: %s", type(metadata))
+            logger.info("ℹ️  YAML frontmatter is not a dict: %s", type(metadata))
             metadata = {"agent": "unknown", "parse_warning": "yaml_not_dict"}
         return metadata, body
     except yaml.YAMLError as e:
-        logger.warning("⚠️ YAML parse error: %s", e)
+        logger.info("ℹ️  YAML parse error (using markdown body): %s", e)
         metadata = {
             "agent": "unknown",
             "parse_error": str(e),
@@ -114,10 +114,10 @@ def parse_json_safe(text: str) -> Dict[str, Any]:
             parsed = json.loads(t)
             if isinstance(parsed, dict):
                 return parsed
-            logger.warning("⚠️ JSON parsed but not a dict (got %s)", type(parsed))
+            logger.debug("JSON parsed but not a dict (got %s)", type(parsed))
             return {"parse_warning": "json_not_dict"}
         except json.JSONDecodeError as e:
-            logger.warning("⚠️ JSON parse failed: %s", e)
+            logger.debug("JSON parse failed: %s", e)
 
     metadata, _ = parse_analysis(t)
     if "parse_error" not in metadata and metadata:
