@@ -791,7 +791,6 @@ parsing_configuration:
     - python
     - java
     - go
-    - rust
     - swift
     - kotlin
     - cpp
