@@ -30,7 +30,6 @@ from util.llm_model import get_sub_agent_model
 
 # Import tools
 from tools.engineering_practices_evaluator import evaluate_engineering_practices
-from tools.save_analysis_artifact import save_analysis_result
 
 # Import callback utilities
 from util.callbacks import (
@@ -91,12 +90,13 @@ Architecture Guidelines:
 
 def engineering_agent_after_agent(callback_context):
     """
-    After Agent Callback - Log dogmatic language detection (validation only).
+    After Agent Callback - Validate file paths and filter dogmatic language.
     
     Note: ADK only passes callback_context (no content parameter).
     Accesses agent output via session state for validation.
     
     Quality Gates:
+    - Validate that file paths mentioned exist in actual PR files
     - Detect dogmatic architectural recommendations
     - Check for bias/profanity
     - Record metrics (validation only)
@@ -108,6 +108,12 @@ def engineering_agent_after_agent(callback_context):
             if not text:
                 logger.warning("⚠️ [engineering_practices_agent] No analysis in state")
                 return None
+            
+            # Get actual PR files for validation
+            actual_files = []
+            files_metadata = callback_context.state.get('files', [])
+            if files_metadata:
+                actual_files = [f.get('file_path', '') for f in files_metadata]
             
             # Parse Markdown+YAML format
             from util.markdown_yaml_parser import parse_analysis, validate_analysis, filter_content
@@ -121,6 +127,25 @@ def engineering_agent_after_agent(callback_context):
             errors = validate_analysis(metadata, markdown_body, "engineering_practices_agent")
             if errors:
                 logger.info("ℹ️  [engineering_practices_agent] YAML frontmatter validation (optional): %s", errors)
+            
+            # GUARDRAIL: Validate file paths (Option 3)
+            hallucination_count = 0
+            if actual_files:
+                # Extract file paths mentioned in the report
+                mentioned_files = re.findall(r'`([^`]+\.(py|tsx|ts|js|java|go|cpp|c|h))`', markdown_body)
+                mentioned_files = [f[0] for f in mentioned_files]  # Extract just the path
+                
+                # Check for hallucinated file paths
+                for mentioned in mentioned_files:
+                    # Check if any actual file matches (allow partial matches)
+                    if not any(mentioned in actual or actual.endswith(mentioned) for actual in actual_files):
+                        hallucination_count += 1
+                        logger.warning(f"🚫 [engineering_practices_agent] Hallucinated file path detected: {mentioned}")
+                        logger.warning(f"   Actual files in PR: {actual_files}")
+                
+                if hallucination_count > 0:
+                    logger.warning(f"🚫 [engineering_practices_agent] Detected {hallucination_count} hallucinated file references")
+                    timer.record_filtered('hallucinated_files', hallucination_count)
             
             # Check for dogmatic recommendations in markdown body
             dogma_patterns = [
@@ -152,7 +177,7 @@ def engineering_agent_after_agent(callback_context):
             
             timer.record_filtered('bias', bias_filtered)
             
-            logger.info(f"✅ [engineering_practices_agent] after_agent: Detected {dogma_filtered} dogmatic + {bias_filtered} biased terms")
+            logger.info(f"✅ [engineering_practices_agent] after_agent: Hallucinated files={hallucination_count}, Dogma={dogma_filtered}, Bias={bias_filtered}")
             
             return None  # Validation only, no content modification
         
@@ -172,28 +197,44 @@ engineering_practices_agent = Agent(
     model=agent_model,
     description="Evaluates software engineering best practices and development workflows",
     instruction="""
-    You are the Engineering Practices Analysis Agent in a sequential code review pipeline.
+You are the Engineering Practices Analysis Agent. Your job is to evaluate engineering best practices in the PR codebase and report them with evidence.
 
-Your job:
-- Evaluate engineering best practices, design principles, maintainability, developer workflows.
-- Focus on practical, context-aware recommendations (avoid dogma).
+CRITICAL FORMAT REQUIREMENT
+- Your response MUST begin with the YAML frontmatter.
+- Do not write any text before the opening '---'.
 
-IMPORTANT REALITY CHECK:
+IMPORTANT REALITY CHECK
 - The PR code is stored in shared session state under the key "code".
 - You (the LLM) do NOT read session state directly.
 - The tool evaluate_engineering_practices reads the PR code from session state internally.
+- The tool output is the ONLY source of truth.
 
-STEP 1: Run evaluation (mandatory)
-- ALWAYS call evaluate_engineering_practices() exactly once at the start.
-- Do not invent issues before tool results exist.
+STEP 1: Run the engineering practices evaluation (MANDATORY)
+- ALWAYS call evaluate_engineering_practices() exactly once at the start of your analysis.
+- Do NOT skip this call.
+- Do NOT invent issues before the evaluation results are available.
 
-STEP 2: Use tool output as source of truth
-- Use only the tool output and code evidence it provides.
-- Do NOT invent file paths, line numbers, or snippets.
-- If the tool output is uncertain or missing evidence, say so and recommend verification.
+STEP 2: Analyze the tool output (SOURCE OF TRUTH)
+- Use ONLY the tool output for:
+  - file paths
+  - line numbers
+  - code snippets / evidence
+  - severity
+  - issue categories
+- Do NOT make up file names, line numbers, code snippets, or issues.
 
-STEP 3: Output format (required)
-Output Markdown with YAML frontmatter exactly:
+Tool output contains:
+- files_analyzed: List of actual file paths
+- findings: List of issues with file_path, line_start, line_end, code_snippet, severity
+- file_scores: Per-file metrics
+- summary: Count of critical/high/medium/low issues
+
+Treat ALL tool-reported findings as valid inputs.
+If uncertainty exists in a finding, clearly state it and recommend verification.
+
+STEP 3: Create the report in Markdown + YAML format
+
+Your response MUST follow this exact structure:
 
 ---
 agent: engineering_practices_agent
@@ -205,24 +246,61 @@ severity:
   medium: X
   low: X
 confidence: 0.XX
+files_analyzed: [list actual files from tool output]
 ---
 
 # Engineering Practices Analysis
 
+## Files Analyzed
+- List the actual files from tool_output['files_analyzed']
+
+## Findings
+
 For each issue include:
-- Title + confidence (0.0–1.0)
-- Severity (critical/high/medium/low)
-- Evidence:
-  - File path
-  - Line number(s) if available
-  - Code snippet (only if provided)
-- Why it matters (maintainability/reliability/team velocity)
-- Practical recommendation and trade-offs (avoid absolutist language)
+- Title (short and descriptive)
+- Severity (critical / high / medium / low)
+- Evidence (FROM TOOL OUTPUT ONLY):
+  - File path (from tool output)
+  - Line number(s) (from tool output)
+  - Code snippet (from tool output)
+- Explanation:
+  - Why this is an engineering practices issue
+  - Impact on maintainability/quality
+- Recommendation:
+  - Concrete improvement or fix guidance
 
 NO-ISSUE CASE:
-- If no issues found, say exactly: "No significant issues found."
+- If the evaluation reports zero findings, write exactly:
+
+---
+agent: engineering_practices_agent
+summary: No significant engineering practice issues found
+total_issues: 0
+severity:
+  critical: 0
+  high: 0
+  medium: 0
+  low: 0
+confidence: 1.0
+files_analyzed: [list actual files from tool output]
+---
+
+# Engineering Practices Analysis
+
+## Files Analyzed
+- [list files]
+
+No significant engineering practice issues detected in the analyzed files.
+
+CRITICAL RULES
+- ALWAYS call evaluate_engineering_practices() first.
+- Output your analysis in Markdown+YAML format (ADK will auto-save via output_key).
+- NEVER hallucinate evidence (paths, lines, snippets, issues).
+- NEVER invent file paths like "authentication.py", "user_manager.py", "payment_processor.py".
+- Prefer fewer, higher-confidence findings over speculative ones.
+- Your complete Markdown+YAML output will be automatically saved to session state.
     """.strip(),
-    tools=[evaluate_engineering_practices, save_analysis_result],
+    tools=[evaluate_engineering_practices],
     output_key="engineering_practices_analysis",  # Auto-write to session state
     
     # Phase 1 Guardrails: Callbacks
@@ -231,5 +309,5 @@ NO-ISSUE CASE:
 )
 
 logger.info("✅ [engineering_practices_agent] Engineering Practices Agent created successfully")
-logger.info(f"🔧 [engineering_practices_agent] Tools available: {[tool.__name__ if hasattr(tool, '__name__') else str(tool) for tool in [evaluate_engineering_practices, save_analysis_result]]}")
+logger.info(f"🔧 [engineering_practices_agent] Tools available: {[tool.__name__ if hasattr(tool, '__name__') else str(tool) for tool in [evaluate_engineering_practices]]}")
 logger.info("🛡️ [engineering_practices_agent] Phase 1 Guardrails enabled: before_model, after_agent callbacks")

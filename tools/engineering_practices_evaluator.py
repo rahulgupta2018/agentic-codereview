@@ -11,104 +11,135 @@ from typing import Dict, Any, List, Optional
 from google.adk.tools.tool_context import ToolContext
 
 
-def evaluate_engineering_practices(tool_context: ToolContext) -> Dict[str, Any]:
+def evaluate_engineering_practices(tool_context: ToolContext, code: str = "") -> Dict[str, Any]:
     """
     Evaluate engineering practices and software development best practices.
     
     Args:
         tool_context: ADK ToolContext containing session state and parameters
+        code: Optional code override (fallback). Prefer tool_context.state["code"].
         
     Returns:
-        dict: Engineering practices evaluation results with scores and recommendations
+        dict: Engineering practices evaluation results with actual file paths and code evidence
     """
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.info("🔧 [evaluate_engineering_practices] Tool called")
+    
     execution_start = time.time()
     
     try:
-        # Get code from tool context
-        code = tool_context.state.get('code', '')
+        # Get code from tool context (prefer state over parameter)
+        code_from_state = tool_context.state.get('code', '')
+        code = code_from_state or code or ''
+        files = tool_context.state.get('files', [])  # File metadata
         language = tool_context.state.get('language', 'python')
         file_path = tool_context.state.get('file_path', 'unknown')
-        project_structure = tool_context.state.get('project_structure', {})
         
-        # Check parameters if not in state
-        if not code and hasattr(tool_context, 'parameters'):
-            code = getattr(tool_context, 'parameters', {}).get('code', '')
-            language = getattr(tool_context, 'parameters', {}).get('language', 'python')
-            file_path = getattr(tool_context, 'parameters', {}).get('file_path', 'unknown')
+        logger.info(f"🔧 [evaluate_engineering_practices] code length: {len(code)}, files count: {len(files)}")
         
         if not code:
+            logger.error("❌ [evaluate_engineering_practices] No code provided")
             return {
                 'status': 'error',
                 'error_message': 'No code provided for engineering practices evaluation',
                 'tool_name': 'evaluate_engineering_practices'
             }
         
-        # Perform comprehensive engineering practices evaluation
+        # Parse combined code into individual files
+        logger.info("🔧 [evaluate_engineering_practices] Parsing combined code...")
+        parsed_files = _parse_combined_code(code)
+        logger.info(f"🔧 [evaluate_engineering_practices] Parsed {len(parsed_files)} files")
+        
+        # If parsing fails, use files metadata
+        if not parsed_files and files:
+            logger.warning("⚠️  [evaluate_engineering_practices] Parsing failed, using files metadata")
+            parsed_files = []
+            for file_info in files:
+                parsed_files.append({
+                    'file_path': file_info.get('file_path', 'unknown'),
+                    'language': file_info.get('language', 'unknown'),
+                    'content': '',  # Content already consumed
+                    'lines': file_info.get('lines', 0)
+                })
+        
+        if not parsed_files:
+            logger.error("❌ [evaluate_engineering_practices] Unable to parse files")
+            return {
+                'status': 'error',
+                'error_message': 'Unable to parse files from combined code',
+                'tool_name': 'evaluate_engineering_practices'
+            }
+        if not parsed_files:
+            return {
+                'status': 'error',
+                'error_message': 'Unable to parse files from combined code',
+                'tool_name': 'evaluate_engineering_practices'
+            }
+        
+        # Analyze each file and collect findings with actual file paths
+        all_findings = []
+        file_scores = {}
+        
+        logger.info(f"🔧 [evaluate_engineering_practices] Analyzing {len(parsed_files)} files...")
+        
+        for file_data in parsed_files:
+            file_path_actual = file_data['file_path']
+            file_content = file_data['content']
+            file_lang = file_data['language']
+            
+            logger.info(f"🔍 [evaluate_engineering_practices] Analyzing: {file_path_actual} ({file_lang}, {len(file_content)} chars)")
+            
+            # Skip empty files
+            if not file_content or len(file_content.strip()) < 10:
+                logger.warning(f"⚠️  [evaluate_engineering_practices] Skipping {file_path_actual} - empty or too short")
+                continue
+            
+            # Analyze this specific file
+            findings = _analyze_file_engineering_practices(
+                file_content, 
+                file_lang, 
+                file_path_actual
+            )
+            
+            logger.info(f"✅ [evaluate_engineering_practices] Found {len(findings)} issues in {file_path_actual}")
+            
+            # Add findings with actual file context
+            if findings:
+                all_findings.extend(findings)
+            
+            # Store per-file metrics
+            file_scores[file_path_actual] = {
+                'language': file_lang,
+                'lines': len(file_content.split('\n')),
+                'issue_count': len(findings)
+            }
+        
+        logger.info(f"✅ [evaluate_engineering_practices] Total findings: {len(all_findings)} across {len(file_scores)} files")
+        
+        # Build comprehensive result with actual file evidence
         practices_result = {
             'status': 'success',
             'tool_name': 'evaluate_engineering_practices',
-            'file_path': file_path,
-            'language': language,
             'analysis_type': 'engineering_practices_evaluation',
-            'solid_principles': {
-                'single_responsibility': _evaluate_single_responsibility(code, language),
-                'open_closed': _evaluate_open_closed(code, language),
-                'liskov_substitution': _evaluate_liskov_substitution(code, language),
-                'interface_segregation': _evaluate_interface_segregation(code, language),
-                'dependency_inversion': _evaluate_dependency_inversion(code, language)
+            'files_analyzed': list(file_scores.keys()),
+            'file_count': len(file_scores),
+            'findings': all_findings,  # Each finding has file_path, line_number, code_snippet
+            'file_scores': file_scores,
+            'summary': {
+                'total_findings': len(all_findings),
+                'critical': sum(1 for f in all_findings if f.get('severity') == 'critical'),
+                'high': sum(1 for f in all_findings if f.get('severity') == 'high'),
+                'medium': sum(1 for f in all_findings if f.get('severity') == 'medium'),
+                'low': sum(1 for f in all_findings if f.get('severity') == 'low')
             },
-            'code_organization': {
-                'modularity_score': _assess_modularity(code, language),
-                'separation_of_concerns': _assess_separation_of_concerns(code, language),
-                'naming_conventions': _evaluate_naming_conventions(code, language),
-                'code_structure': _evaluate_code_structure(code, language)
-            },
-            'documentation_quality': {
-                'docstring_coverage': _assess_docstring_coverage(code, language),
-                'comment_quality': _assess_comment_quality(code, language),
-                'readme_indicators': _check_readme_indicators(code),
-                'api_documentation': _check_api_documentation(code, language)
-            },
-            'testing_practices': {
-                'test_indicators': _assess_testing_practices(code, language),
-                'test_coverage_hints': _assess_test_coverage_hints(code, language),
-                'test_quality': _assess_test_quality(code, language),
-                'testing_patterns': _identify_testing_patterns(code, language)
-            },
-            'error_handling': {
-                'exception_handling': _evaluate_exception_handling(code, language),
-                'error_recovery': _evaluate_error_recovery(code, language),
-                'logging_practices': _evaluate_logging_practices(code, language)
-            },
-            'performance_considerations': {
-                'algorithm_efficiency': _assess_algorithm_efficiency(code, language),
-                'resource_management': _assess_resource_management(code, language),
-                'caching_strategies': _identify_caching_strategies(code, language)
-            },
-            'overall_scores': {},
-            'recommendations': [],
             'timestamp': time.time()
         }
-        
-        # Calculate overall scores
-        practices_result['overall_scores'] = _calculate_overall_scores(practices_result)
-        
-        # Generate recommendations
-        practices_result['recommendations'] = _generate_engineering_recommendations(practices_result)
         
         execution_time = time.time() - execution_start
         practices_result['execution_time_seconds'] = execution_time
         
-        # Store results in session state
-        current_analysis = tool_context.state.get('engineering_practices_analysis', {})
-        current_analysis[file_path] = practices_result
-        tool_context.state['engineering_practices_analysis'] = current_analysis
-        
-        # Update analysis progress
-        analysis_progress = tool_context.state.get('analysis_progress', {})
-        analysis_progress['engineering_practices_completed'] = True
-        analysis_progress['engineering_practices_timestamp'] = time.time()
-        tool_context.state['analysis_progress'] = analysis_progress
+        logger.info(f"✅ [evaluate_engineering_practices] Complete - {len(all_findings)} findings in {execution_time:.2f}s")
         
         return practices_result
         
@@ -122,10 +153,760 @@ def evaluate_engineering_practices(tool_context: ToolContext) -> Dict[str, Any]:
             'execution_time_seconds': execution_time
         }
         
-        tool_context.state['engineering_practices_error'] = error_result
         return error_result
 
 
+def _parse_combined_code(combined_code: str) -> List[Dict[str, Any]]:
+    """
+    Parse combined code (with file headers) into individual files.
+    
+    Expected format:
+    ================================================================================
+    File: path/to/file.py
+    Language: python
+    Status: modified
+    Lines: 123
+    ================================================================================
+    
+    <file content>
+    
+    Returns:
+        List of dicts with file_path, language, content, lines
+    """
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    files = []
+    
+    # Find all file header blocks
+    # Pattern: ===\nFile: ...\nLanguage: ...\n...\n===\n<content>
+    pattern = r'={80,}\n(File:.*?\n(?:Language:.*?\n)?(?:Status:.*?\n)?(?:Lines:.*?\n)?)={80,}\n(.*?)(?=\n={80,}|$)'
+    
+    matches = re.findall(pattern, combined_code, re.DOTALL)
+    logger.info(f"🔧 [_parse_combined_code] Found {len(matches)} file blocks")
+    
+    for header, content in matches:
+        file_info = {}
+        
+        # Parse header lines
+        for line in header.strip().split('\n'):
+            if line.startswith('File:'):
+                file_info['file_path'] = line.replace('File:', '').strip()
+            elif line.startswith('Language:'):
+                file_info['language'] = line.replace('Language:', '').strip()
+            elif line.startswith('Status:'):
+                file_info['status'] = line.replace('Status:', '').strip()
+            elif line.startswith('Lines:'):
+                try:
+                    file_info['lines'] = int(line.replace('Lines:', '').strip())
+                except ValueError:
+                    file_info['lines'] = 0
+        
+        file_info['content'] = content.strip()
+        
+        if file_info.get('file_path'):
+            logger.info(f"✅ [_parse_combined_code] Parsed: {file_info['file_path']} ({file_info.get('language', 'unknown')}, {len(file_info['content'])} chars)")
+            files.append(file_info)
+        else:
+            logger.warning(f"⚠️  [_parse_combined_code] Skipping block - no file path found")
+    
+    return files
+
+
+def _analyze_file_engineering_practices(
+    code: str, 
+    language: str, 
+    file_path: str
+) -> List[Dict[str, Any]]:
+    """
+    Analyze a single file for engineering practice violations.
+    Returns list of findings with actual file context.
+    """
+    findings = []
+    
+    # Extract functions and classes with line numbers
+    functions = _extract_functions_with_lines(code, language)
+    classes = _extract_classes_with_lines(code, language)
+    
+    # Check for long functions (SRP violation)
+    for func in functions:
+        if func['line_count'] > 50:
+            findings.append({
+                'type': 'long_function',
+                'severity': 'high' if func['line_count'] > 80 else 'medium',
+                'title': f"Long function: `{func['name']}`",
+                'file_path': file_path,
+                'line_start': func.get('line_start', 0),
+                'line_end': func.get('line_end', 0),
+                'code_snippet': func.get('snippet', ''),
+                'description': f"Function has {func['line_count']} lines (threshold: 50). Long functions are harder to test and maintain.",
+                'recommendation': f"Break down `{func['name']}` into smaller, focused functions with single responsibilities.",
+                'confidence': 0.95
+            })
+    
+    # Check for god classes
+    for cls in classes:
+        method_count = len(cls.get('methods', []))
+        line_count = cls.get('line_count', 0)
+        
+        if method_count > 10 or line_count > 200:
+            findings.append({
+                'type': 'god_class',
+                'severity': 'critical' if method_count > 15 else 'high',
+                'title': f"God class anti-pattern: `{cls['name']}`",
+                'file_path': file_path,
+                'line_start': cls.get('line_start', 0),
+                'line_end': cls.get('line_end', 0),
+                'code_snippet': cls.get('snippet', ''),
+                'description': f"Class has {method_count} methods and {line_count} lines. This violates Single Responsibility Principle.",
+                'recommendation': f"Refactor `{cls['name']}` into smaller, focused services or modules.",
+                'confidence': 0.90
+            })
+    
+    # Check for missing error handling
+    try_blocks = len(re.findall(r'\btry\s*:', code))
+    except_blocks = len(re.findall(r'\bexcept\s+', code))
+    
+    if try_blocks > 0 and except_blocks == 0:
+        findings.append({
+            'type': 'missing_error_handling',
+            'severity': 'medium',
+            'title': 'Incomplete error handling',
+            'file_path': file_path,
+            'line_start': 0,
+            'line_end': 0,
+            'code_snippet': '',
+            'description': f"Found {try_blocks} try blocks but no except blocks. Errors may not be handled properly.",
+            'recommendation': 'Add appropriate except blocks to handle exceptions gracefully.',
+            'confidence': 0.75
+        })
+    
+    # Check for missing docstrings (Python/TypeScript)
+    if language in ['python', 'typescript', 'javascript']:
+        docstring_coverage = _assess_docstring_coverage_simple(code, language)
+        if docstring_coverage < 30:
+            findings.append({
+                'type': 'poor_documentation',
+                'severity': 'low',
+                'title': 'Low docstring coverage',
+                'file_path': file_path,
+                'line_start': 0,
+                'line_end': 0,
+                'code_snippet': '',
+                'description': f"Only {docstring_coverage}% of functions have docstrings. This reduces code maintainability.",
+                'recommendation': 'Add docstrings to public functions and classes explaining their purpose, parameters, and return values.',
+                'confidence': 0.80
+            })
+    
+    return findings
+
+
+def _extract_functions_with_lines(code: str, language: str) -> List[Dict[str, Any]]:
+    """Extract functions with line numbers and snippets for multiple languages."""
+    functions = []
+    lines = code.split('\n')
+    
+    if language == 'python':
+        # Match Python function definitions
+        for i, line in enumerate(lines, 1):
+            match = re.match(r'^(\s*)def\s+(\w+)\s*\(', line)
+            if match:
+                indent = len(match.group(1))
+                func_name = match.group(2)
+                
+                # Find function end (next function or class at same/lower indent)
+                end_line = i
+                for j in range(i, len(lines)):
+                    next_line = lines[j]
+                    if next_line.strip() and not next_line.strip().startswith('#'):
+                        next_indent = len(next_line) - len(next_line.lstrip())
+                        if next_indent <= indent and j > i:
+                            if re.match(r'^\s*(def|class)\s+', next_line):
+                                end_line = j
+                                break
+                else:
+                    end_line = len(lines)
+                
+                line_count = end_line - i
+                snippet = '\n'.join(lines[i-1:min(i+9, end_line)])  # First 10 lines
+                
+                functions.append({
+                    'name': func_name,
+                    'line_start': i,
+                    'line_end': end_line,
+                    'line_count': line_count,
+                    'snippet': snippet
+                })
+    
+    elif language in ['typescript', 'javascript']:
+        # Match TS/JS function definitions
+        for i, line in enumerate(lines, 1):
+            match = re.match(r'^\s*(export\s+)?(async\s+)?(function|const|let|var)\s+(\w+)\s*[=\(]', line)
+            if match:
+                func_name = match.group(4)
+                
+                # Simple heuristic: count until closing brace
+                brace_count = line.count('{') - line.count('}')
+                end_line = i
+                
+                for j in range(i, min(i + 200, len(lines))):
+                    next_line = lines[j]
+                    brace_count += next_line.count('{') - next_line.count('}')
+                    if brace_count == 0:
+                        end_line = j + 1
+                        break
+                
+                line_count = end_line - i
+                snippet = '\n'.join(lines[i-1:min(i+9, end_line)])
+                
+                functions.append({
+                    'name': func_name,
+                    'line_start': i,
+                    'line_end': end_line,
+                    'line_count': line_count,
+                    'snippet': snippet
+                })
+    
+    elif language == 'java':
+        # Match Java method definitions
+        for i, line in enumerate(lines, 1):
+            match = re.match(r'^\s*(public|private|protected|static|\s)+ [\w<>\[\]]+\s+(\w+)\s*\(', line)
+            if match and not re.search(r'\b(class|interface|enum)\b', line):
+                func_name = match.group(2)
+                
+                brace_count = line.count('{') - line.count('}')
+                end_line = i
+                
+                for j in range(i, min(i + 300, len(lines))):
+                    next_line = lines[j]
+                    brace_count += next_line.count('{') - next_line.count('}')
+                    if brace_count == 0 and j > i:
+                        end_line = j + 1
+                        break
+                
+                line_count = end_line - i
+                snippet = '\n'.join(lines[i-1:min(i+9, end_line)])
+                
+                functions.append({
+                    'name': func_name,
+                    'line_start': i,
+                    'line_end': end_line,
+                    'line_count': line_count,
+                    'snippet': snippet
+                })
+    
+    elif language == 'go':
+        # Match Go function definitions
+        for i, line in enumerate(lines, 1):
+            match = re.match(r'^\s*func\s+(\w+)\s*\(', line)
+            if match:
+                func_name = match.group(1)
+                
+                brace_count = line.count('{') - line.count('}')
+                end_line = i
+                
+                for j in range(i, min(i + 200, len(lines))):
+                    next_line = lines[j]
+                    brace_count += next_line.count('{') - next_line.count('}')
+                    if brace_count == 0:
+                        end_line = j + 1
+                        break
+                
+                line_count = end_line - i
+                snippet = '\n'.join(lines[i-1:min(i+9, end_line)])
+                
+                functions.append({
+                    'name': func_name,
+                    'line_start': i,
+                    'line_end': end_line,
+                    'line_count': line_count,
+                    'snippet': snippet
+                })
+    
+    elif language in ['swift', 'kotlin']:
+        # Match Swift/Kotlin function definitions
+        for i, line in enumerate(lines, 1):
+            match = re.match(r'^\s*(public|private|internal|fileprivate|open)?\s*func\s+(\w+)\s*\(', line)
+            if match:
+                func_name = match.group(2)
+                
+                brace_count = line.count('{') - line.count('}')
+                end_line = i
+                
+                for j in range(i, min(i + 200, len(lines))):
+                    next_line = lines[j]
+                    brace_count += next_line.count('{') - next_line.count('}')
+                    if brace_count == 0:
+                        end_line = j + 1
+                        break
+                
+                line_count = end_line - i
+                snippet = '\n'.join(lines[i-1:min(i+9, end_line)])
+                
+                functions.append({
+                    'name': func_name,
+                    'line_start': i,
+                    'line_end': end_line,
+                    'line_count': line_count,
+                    'snippet': snippet
+                })
+    
+    elif language in ['cpp', 'csharp']:
+        # Match C++/C# method definitions
+        for i, line in enumerate(lines, 1):
+            match = re.match(r'^\s*(public|private|protected|static|virtual|override|async)?\s*[\w<>\[\]]+\s+(\w+)\s*\(', line)
+            if match and not re.search(r'\b(class|struct|namespace|using)\b', line):
+                func_name = match.group(2)
+                
+                brace_count = line.count('{') - line.count('}')
+                end_line = i
+                
+                for j in range(i, min(i + 300, len(lines))):
+                    next_line = lines[j]
+                    brace_count += next_line.count('{') - next_line.count('}')
+                    if brace_count == 0 and j > i:
+                        end_line = j + 1
+                        break
+                
+                line_count = end_line - i
+                snippet = '\n'.join(lines[i-1:min(i+9, end_line)])
+                
+                functions.append({
+                    'name': func_name,
+                    'line_start': i,
+                    'line_end': end_line,
+                    'line_count': line_count,
+                    'snippet': snippet
+                })
+    
+    elif language == 'php':
+        # Match PHP function definitions
+        for i, line in enumerate(lines, 1):
+            match = re.match(r'^\s*(public|private|protected)?\s*function\s+(\w+)\s*\(', line)
+            if match:
+                func_name = match.group(2)
+                
+                brace_count = line.count('{') - line.count('}')
+                end_line = i
+                
+                for j in range(i, min(i + 200, len(lines))):
+                    next_line = lines[j]
+                    brace_count += next_line.count('{') - next_line.count('}')
+                    if brace_count == 0:
+                        end_line = j + 1
+                        break
+                
+                line_count = end_line - i
+                snippet = '\n'.join(lines[i-1:min(i+9, end_line)])
+                
+                functions.append({
+                    'name': func_name,
+                    'line_start': i,
+                    'line_end': end_line,
+                    'line_count': line_count,
+                    'snippet': snippet
+                })
+    
+    elif language == 'ruby':
+        # Match Ruby method definitions
+        for i, line in enumerate(lines, 1):
+            match = re.match(r'^\s*def\s+(\w+)', line)
+            if match:
+                func_name = match.group(1)
+                indent = len(line) - len(line.lstrip())
+                
+                # Find 'end' at same indent level
+                end_line = i
+                for j in range(i, len(lines)):
+                    next_line = lines[j]
+                    if next_line.strip():
+                        next_indent = len(next_line) - len(next_line.lstrip())
+                        if next_indent == indent and next_line.strip() == 'end':
+                            end_line = j + 1
+                            break
+                else:
+                    end_line = len(lines)
+                
+                line_count = end_line - i
+                snippet = '\n'.join(lines[i-1:min(i+9, end_line)])
+                
+                functions.append({
+                    'name': func_name,
+                    'line_start': i,
+                    'line_end': end_line,
+                    'line_count': line_count,
+                    'snippet': snippet
+                })
+    
+    elif language == 'sql':
+        # Match SQL stored procedures/functions
+        for i, line in enumerate(lines, 1):
+            match = re.match(r'^\s*CREATE\s+(PROCEDURE|FUNCTION)\s+(\w+)', line, re.IGNORECASE)
+            if match:
+                func_name = match.group(2)
+                
+                # Find END statement
+                end_line = i
+                for j in range(i, min(i + 500, len(lines))):
+                    if re.search(r'\bEND\b', lines[j], re.IGNORECASE):
+                        end_line = j + 1
+                        break
+                
+                line_count = end_line - i
+                snippet = '\n'.join(lines[i-1:min(i+9, end_line)])
+                
+                functions.append({
+                    'name': func_name,
+                    'line_start': i,
+                    'line_end': end_line,
+                    'line_count': line_count,
+                    'snippet': snippet
+                })
+    
+    return functions
+
+
+def _extract_classes_with_lines(code: str, language: str) -> List[Dict[str, Any]]:
+    """Extract classes with line numbers and method counts for multiple languages."""
+    classes = []
+    lines = code.split('\n')
+    
+    if language == 'python':
+        for i, line in enumerate(lines, 1):
+            match = re.match(r'^(\s*)class\s+(\w+)', line)
+            if match:
+                indent = len(match.group(1))
+                class_name = match.group(2)
+                
+                # Find class end
+                end_line = i
+                method_count = 0
+                
+                for j in range(i, len(lines)):
+                    next_line = lines[j]
+                    if next_line.strip():
+                        next_indent = len(next_line) - len(next_line.lstrip())
+                        
+                        # Count methods
+                        if re.match(r'^\s+def\s+', next_line):
+                            method_count += 1
+                        
+                        # Check for class end
+                        if next_indent <= indent and j > i:
+                            if re.match(r'^\s*(def|class)\s+', next_line):
+                                end_line = j
+                                break
+                else:
+                    end_line = len(lines)
+                
+                line_count = end_line - i
+                snippet = '\n'.join(lines[i-1:min(i+14, end_line)])  # First 15 lines
+                
+                classes.append({
+                    'name': class_name,
+                    'line_start': i,
+                    'line_end': end_line,
+                    'line_count': line_count,
+                    'methods': list(range(method_count)),  # Just count
+                    'snippet': snippet
+                })
+    
+    elif language in ['typescript', 'javascript']:
+        for i, line in enumerate(lines, 1):
+            match = re.match(r'^\s*(export\s+)?(class|interface)\s+(\w+)', line)
+            if match:
+                class_name = match.group(3)
+                
+                # Count methods and find class end
+                brace_count = line.count('{') - line.count('}')
+                end_line = i
+                method_count = 0
+                
+                for j in range(i, min(i + 500, len(lines))):
+                    next_line = lines[j]
+                    
+                    # Count methods
+                    if re.search(r'^\s+\w+\s*\(|^\s+\w+\s*=\s*\(', next_line):
+                        method_count += 1
+                    
+                    brace_count += next_line.count('{') - next_line.count('}')
+                    if brace_count == 0:
+                        end_line = j + 1
+                        break
+                
+                line_count = end_line - i
+                snippet = '\n'.join(lines[i-1:min(i+14, end_line)])
+                
+                classes.append({
+                    'name': class_name,
+                    'line_start': i,
+                    'line_end': end_line,
+                    'line_count': line_count,
+                    'methods': list(range(method_count)),
+                    'snippet': snippet
+                })
+    
+    elif language == 'java':
+        for i, line in enumerate(lines, 1):
+            match = re.match(r'^\s*(public|private|protected)?\s*(abstract|final)?\s*class\s+(\w+)', line)
+            if match:
+                class_name = match.group(3)
+                
+                brace_count = line.count('{') - line.count('}')
+                end_line = i
+                method_count = 0
+                
+                for j in range(i, min(i + 1000, len(lines))):
+                    next_line = lines[j]
+                    
+                    # Count methods (public/private/protected followed by type and name)
+                    if re.match(r'^\s*(public|private|protected)\s+[\w<>\[\]]+\s+\w+\s*\(', next_line):
+                        method_count += 1
+                    
+                    brace_count += next_line.count('{') - next_line.count('}')
+                    if brace_count == 0 and j > i:
+                        end_line = j + 1
+                        break
+                
+                line_count = end_line - i
+                snippet = '\n'.join(lines[i-1:min(i+14, end_line)])
+                
+                classes.append({
+                    'name': class_name,
+                    'line_start': i,
+                    'line_end': end_line,
+                    'line_count': line_count,
+                    'methods': list(range(method_count)),
+                    'snippet': snippet
+                })
+    
+    elif language == 'go':
+        for i, line in enumerate(lines, 1):
+            match = re.match(r'^\s*type\s+(\w+)\s+struct', line)
+            if match:
+                class_name = match.group(1)
+                
+                brace_count = line.count('{') - line.count('}')
+                end_line = i
+                
+                for j in range(i, min(i + 300, len(lines))):
+                    next_line = lines[j]
+                    brace_count += next_line.count('{') - next_line.count('}')
+                    if brace_count == 0:
+                        end_line = j + 1
+                        break
+                
+                # Count methods (functions with receiver)
+                method_count = len(re.findall(rf'func\s+\(\w+\s+\*?{class_name}\)\s+\w+', code))
+                
+                line_count = end_line - i
+                snippet = '\n'.join(lines[i-1:min(i+14, end_line)])
+                
+                classes.append({
+                    'name': class_name,
+                    'line_start': i,
+                    'line_end': end_line,
+                    'line_count': line_count,
+                    'methods': list(range(method_count)),
+                    'snippet': snippet
+                })
+    
+    elif language in ['swift', 'kotlin']:
+        for i, line in enumerate(lines, 1):
+            match = re.match(r'^\s*(public|private|internal|open)?\s*(class|struct)\s+(\w+)', line)
+            if match:
+                class_name = match.group(3)
+                
+                brace_count = line.count('{') - line.count('}')
+                end_line = i
+                method_count = 0
+                
+                for j in range(i, min(i + 500, len(lines))):
+                    next_line = lines[j]
+                    
+                    # Count methods
+                    if re.search(r'^\s+func\s+\w+\s*\(', next_line):
+                        method_count += 1
+                    
+                    brace_count += next_line.count('{') - next_line.count('}')
+                    if brace_count == 0:
+                        end_line = j + 1
+                        break
+                
+                line_count = end_line - i
+                snippet = '\n'.join(lines[i-1:min(i+14, end_line)])
+                
+                classes.append({
+                    'name': class_name,
+                    'line_start': i,
+                    'line_end': end_line,
+                    'line_count': line_count,
+                    'methods': list(range(method_count)),
+                    'snippet': snippet
+                })
+    
+    elif language in ['cpp', 'csharp']:
+        for i, line in enumerate(lines, 1):
+            match = re.match(r'^\s*(public|private|protected)?\s*(class|struct)\s+(\w+)', line)
+            if match:
+                class_name = match.group(3)
+                
+                brace_count = line.count('{') - line.count('}')
+                end_line = i
+                method_count = 0
+                
+                for j in range(i, min(i + 1000, len(lines))):
+                    next_line = lines[j]
+                    
+                    # Count methods
+                    if re.match(r'^\s+(public|private|protected)?\s*[\w<>\[\]]+\s+\w+\s*\(', next_line):
+                        method_count += 1
+                    
+                    brace_count += next_line.count('{') - next_line.count('}')
+                    if brace_count == 0 and j > i:
+                        end_line = j + 1
+                        break
+                
+                line_count = end_line - i
+                snippet = '\n'.join(lines[i-1:min(i+14, end_line)])
+                
+                classes.append({
+                    'name': class_name,
+                    'line_start': i,
+                    'line_end': end_line,
+                    'line_count': line_count,
+                    'methods': list(range(method_count)),
+                    'snippet': snippet
+                })
+    
+    elif language == 'php':
+        for i, line in enumerate(lines, 1):
+            match = re.match(r'^\s*(abstract|final)?\s*class\s+(\w+)', line)
+            if match:
+                class_name = match.group(2)
+                
+                brace_count = line.count('{') - line.count('}')
+                end_line = i
+                method_count = 0
+                
+                for j in range(i, min(i + 500, len(lines))):
+                    next_line = lines[j]
+                    
+                    # Count methods
+                    if re.match(r'^\s+(public|private|protected)?\s*function\s+\w+', next_line):
+                        method_count += 1
+                    
+                    brace_count += next_line.count('{') - next_line.count('}')
+                    if brace_count == 0:
+                        end_line = j + 1
+                        break
+                
+                line_count = end_line - i
+                snippet = '\n'.join(lines[i-1:min(i+14, end_line)])
+                
+                classes.append({
+                    'name': class_name,
+                    'line_start': i,
+                    'line_end': end_line,
+                    'line_count': line_count,
+                    'methods': list(range(method_count)),
+                    'snippet': snippet
+                })
+    
+    elif language == 'ruby':
+        for i, line in enumerate(lines, 1):
+            match = re.match(r'^\s*class\s+(\w+)', line)
+            if match:
+                class_name = match.group(1)
+                indent = len(line) - len(line.lstrip())
+                
+                end_line = i
+                method_count = 0
+                
+                for j in range(i, len(lines)):
+                    next_line = lines[j]
+                    if next_line.strip():
+                        next_indent = len(next_line) - len(next_line.lstrip())
+                        
+                        # Count methods
+                        if re.match(r'^\s+def\s+', next_line):
+                            method_count += 1
+                        
+                        # Check for class end
+                        if next_indent == indent and next_line.strip() == 'end':
+                            end_line = j + 1
+                            break
+                
+                line_count = end_line - i
+                snippet = '\n'.join(lines[i-1:min(i+14, end_line)])
+                
+                classes.append({
+                    'name': class_name,
+                    'line_start': i,
+                    'line_end': end_line,
+                    'line_count': line_count,
+                    'methods': list(range(method_count)),
+                    'snippet': snippet
+                })
+    
+    return classes
+
+
+def _assess_docstring_coverage_simple(code: str, language: str) -> int:
+    """Simple docstring coverage check for multiple languages."""
+    if language == 'python':
+        func_count = len(re.findall(r'^\s*def\s+\w+', code, re.MULTILINE))
+        docstring_count = len(re.findall(r'^\s*""".*?"""', code, re.MULTILINE | re.DOTALL))
+        if func_count == 0:
+            return 100
+        return int((docstring_count / func_count) * 100)
+    
+    elif language in ['typescript', 'javascript']:
+        func_count = len(re.findall(r'function\s+\w+|const\s+\w+\s*=', code))
+        comment_count = len(re.findall(r'/\*\*.*?\*/', code, re.DOTALL))
+        if func_count == 0:
+            return 100
+        return int((comment_count / func_count) * 100)
+    
+    elif language in ['java', 'csharp', 'cpp']:
+        func_count = len(re.findall(r'(public|private|protected)\s+[\w<>\[\]]+\s+\w+\s*\(', code))
+        comment_count = len(re.findall(r'/\*\*.*?\*/', code, re.DOTALL))
+        if func_count == 0:
+            return 100
+        return int((comment_count / func_count) * 100)
+    
+    elif language == 'go':
+        func_count = len(re.findall(r'func\s+\w+\s*\(', code))
+        comment_count = len(re.findall(r'//\s+\w+.*\n\s*func', code))
+        if func_count == 0:
+            return 100
+        return int((comment_count / func_count) * 100)
+    
+    elif language in ['swift', 'kotlin']:
+        func_count = len(re.findall(r'func\s+\w+\s*\(', code))
+        comment_count = len(re.findall(r'/\*\*.*?\*/', code, re.DOTALL))
+        if func_count == 0:
+            return 100
+        return int((comment_count / func_count) * 100)
+    
+    elif language == 'php':
+        func_count = len(re.findall(r'function\s+\w+\s*\(', code))
+        comment_count = len(re.findall(r'/\*\*.*?\*/', code, re.DOTALL))
+        if func_count == 0:
+            return 100
+        return int((comment_count / func_count) * 100)
+    
+    elif language == 'ruby':
+        func_count = len(re.findall(r'^\s*def\s+\w+', code, re.MULTILINE))
+        comment_count = len(re.findall(r'^\s*#.*\n\s*def', code, re.MULTILINE))
+        if func_count == 0:
+            return 100
+        return int((comment_count / func_count) * 100)
+    
+    return 50  # Default for SQL or unknown languages
+
+
+# Keep the old helper functions for backwards compatibility
 def _evaluate_single_responsibility(code: str, language: str) -> Dict[str, Any]:
     """Evaluate Single Responsibility Principle adherence."""
     functions = _extract_functions(code, language)

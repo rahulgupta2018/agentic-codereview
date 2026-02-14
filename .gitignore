@@ -182,3 +182,5 @@ data/sessions/*.db-*
 # Docker volumes
 postgres_data/
 pgadmin_data/
+data/cities15000.txt
+data/cities15000.txt.gz

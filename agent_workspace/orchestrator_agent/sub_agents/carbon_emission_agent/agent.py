@@ -26,7 +26,6 @@ from util.llm_model import get_sub_agent_model
 
 # Import tools
 from tools.carbon_footprint_analyzer import analyze_carbon_footprint
-from tools.save_analysis_artifact import save_analysis_result
 
 # Import callback utilities
 from util.callbacks import (
@@ -339,31 +338,27 @@ carbon_emission_agent = Agent(
                 
     **TWO-STEP PROCESS (REQUIRED):**
     
-    **STEP 1: Generate Markdown+YAML Analysis**
-    - Call analyze_carbon_footprint tool
+    **STEP 1: Call analysis tool**
+    - ALWAYS call analyze_carbon_footprint() exactly once at the start
+    - Pass the code from session state to the tool
+    - Use tool output as source of truth for findings
+    
+    **STEP 2: Generate Markdown+YAML Output**
     - Output Markdown with YAML frontmatter (see format above)
     - Start with --- YAML metadata ---
     - Follow with # Markdown sections
     - Include confidence scores for each finding
-    - Reference actual files and line numbers
+    - Reference actual files and line numbers from tool output
     - Provide energy estimates and percentage improvements
+    - Your complete Markdown+YAML output will be automatically saved to session state
     
-    **STEP 2: Save Analysis (MANDATORY)**
-    - IMMEDIATELY after Step 1, call save_analysis_result tool
-    - Parameters:
-      * analysis_data = your complete Markdown+YAML output from Step 1 (as string)
-      * agent_name = "carbon_emission_agent"
-      * tool_context = automatically provided
-    - This saves the artifact for the report synthesizer
-    - DO NOT SKIP - Report synthesizer depends on this saved artifact
-    
-    **STEP 3: Write to Session State (MANDATORY)**
-    - After saving artifact, write your Markdown+YAML analysis to session state key: carbon_emission_analysis
-    - Use the session state to pass data to next agent in pipeline
-    
-    YOU MUST CALL BOTH TOOLS IN ORDER: analyze_carbon_footprint → save_analysis_result
+    CRITICAL RULES:
+    - ALWAYS call analyze_carbon_footprint() first
+    - Output your analysis in Markdown+YAML format (ADK will auto-save via output_key)
+    - NEVER hallucinate file paths or code snippets
+    - Use only evidence from tool output
     """.strip(),
-    tools=[analyze_carbon_footprint, save_analysis_result],
+    tools=[analyze_carbon_footprint],
     output_key="carbon_emission_analysis",  # Auto-write to session state
     
     # Phase 1 Guardrails: Callbacks
@@ -372,5 +367,5 @@ carbon_emission_agent = Agent(
 )
 
 logger.info("✅ [carbon_emission_agent] Carbon Emission Agent created successfully")
-logger.info(f"🔧 [carbon_emission_agent] Tools available: {[tool.__name__ if hasattr(tool, '__name__') else str(tool) for tool in [analyze_carbon_footprint, save_analysis_result]]}")
+logger.info(f"🔧 [carbon_emission_agent] Tools available: {[tool.__name__ if hasattr(tool, '__name__') else str(tool) for tool in [analyze_carbon_footprint]]}")
 logger.info("🛡️ [carbon_emission_agent] Phase 1 Guardrails enabled: before_model, after_agent callbacks")
